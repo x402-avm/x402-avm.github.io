@@ -134,7 +134,7 @@ Algorand address of the service recipient/vendor.
 </ParamField>
 
 <ParamField body="asset_id" type="int | str" required>
-Asset ID: 0 for native ALGO (microAlgos), or positive ASA ID.
+Asset ID: 0 for native ALGO (microALGO), or positive ASA ID.
 </ParamField>
 
 <ParamField body="days" type="int" default="30">
@@ -149,7 +149,7 @@ Current unix timestamp. If None, uses system time (`time.time()`).
 
 <ResponseField name="returns" type="int">
 Sum of transaction amounts transferred within the window, in base units
-(microAlgos for ALGO, or base atomic units for ASAs). Returns 0 on query errors.
+(microALGO for ALGO, or base atomic units for ASAs). Returns 0 on query errors.
 </ResponseField>
 
 **Example**
@@ -344,4 +344,4 @@ False
 
 - `for_network`: Factory constructor resolving indexer endpoints by network name.
 
-<sub>Source: [ai_economy_sdk/chain.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/chain.py#L17)</sub>
+<sub>Source: [ai_economy_sdk/chain.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/chain.py#L34)</sub>

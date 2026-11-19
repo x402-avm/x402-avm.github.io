@@ -36,10 +36,10 @@ gate = PaymentGate(
     prices={"echo": 5000},
 )
 
-app = gate.wrap(mcp)  # ASGI app
+app = gate.wrap(mcp, transport="streamable-http")  # ASGI app
 ```
 
-Serve `app` with any ASGI server, for example `uvicorn.run(app, host="127.0.0.1", port=9201)`. MCP clients connect to `http://127.0.0.1:9201/sse`.
+Serve `app` with any ASGI server, for example `uvicorn.run(app, host="127.0.0.1", port=9201)`. MCP clients connect to `http://127.0.0.1:9201/mcp`.
 
 ### Constructor parameters
 
@@ -63,14 +63,44 @@ Serve `app` with any ASGI server, for example `uvicorn.run(app, host="127.0.0.1"
 | `min_fee_per_txn` | `1000` | Network minimum fee; the fee floor is twice this. |
 | `allow_loss` | `False` | Allow ALGO prices at or below the fee floor. |
 | `replay_db` | `None` | SQLite path for a replay store shared by several processes. |
-| `replay_cache_size` | `5000` | Documented as the in-memory replay cache size; the 0.4.x replay store does not read it. |
+| `replay_cache_size` | `5000` | Documented as the in-memory replay cache size; the replay store does not read it. |
 
 Every parameter, with types: [`PaymentGate` reference](/reference/python/ai-economy-sdk/payment-gate).
 
+## Transports
+
+`wrap()` serves either MCP HTTP transport:
+
+| `transport=` | Endpoints | Notes |
+|---|---|---|
+| `"streamable-http"` (alias `"http"`) | `POST /mcp` | Recommended. Stateless by default; pass `stateless_http=False` for MCP sessions. |
+| `"sse"` | `GET /sse`, `POST /messages/` | Legacy HTTP+SSE transport, for MCP clients that do not support Streamable HTTP yet. |
+
+<Note>
+  Calling `wrap(mcp)` without `transport=` still serves SSE, as in 0.4, and emits a `FutureWarning`: the default will change to `"streamable-http"` in a future release. Always pass `transport=` explicitly. `path=` changes the endpoint path, and other keyword arguments are passed to `FastMCP.http_app()`.
+</Note>
+
+On the client side, `paid_mcp_session` uses Streamable HTTP for URLs whose path ends in `/mcp` and SSE for others; pass `transport=` to choose explicitly. See [Client](/ai-economy-sdk/client).
+
 ### What wrap() adds
 
-1. **`GateMiddleware`**, an ASGI middleware. `GET /sse` and non-tool MCP messages pass through. For `POST /messages*` with a `tools/call` body it reads the caller's identity, computes the price and either passes the request through (price 0), answers `402`, or verifies the attached payment and reserves it against replay.
-2. **`SettleOnSuccessMiddleware`**, a FastMCP middleware. After the tool returns, it settles the reserved payment if the tool succeeded and releases it otherwise.
+1. **The gate's ASGI middleware.** It inspects the JSON-RPC body of every HTTP `POST`, whatever its path or transport. Other requests and non-tool MCP messages (`initialize`, `tools/list`) pass through. For a `tools/call` it reads the caller's identity, computes the price and either passes the request through (price 0), answers `402`, or verifies the attached payment and reserves it against replay. JSON-RPC batches containing a `tools/call` are rejected with HTTP `400`.
+2. **`SettleOnSuccessMiddleware`**, a FastMCP middleware. After the tool returns, it settles the reserved payment if the tool succeeded and releases it otherwise. It refuses, with `PaymentRequiredError`, any priced tool call that did not pass through the gate, so a transport the gate does not wrap cannot serve paid tools for free.
+
+<Warning>
+  ai-economy-sdk 0.4.x only inspected `POST` requests whose path ended in `/messages`, so a Streamable HTTP app or a gated SSE app mounted under a path prefix served priced tools without payment. Use 0.5.0 or later.
+</Warning>
+
+### Build the HTTP app yourself
+
+To build the FastMCP HTTP app yourself (for example to mount it inside a larger Starlette or FastAPI app), install both layers. Without `SettleOnSuccessMiddleware` the gate refuses priced calls with HTTP `500` instead of serving them unpaid.
+
+```python
+from ai_economy_sdk import SettleOnSuccessMiddleware
+
+mcp.add_middleware(SettleOnSuccessMiddleware(gate))
+app = mcp.http_app(transport="http", middleware=gate.middleware())
+```
 
 ## Decorator-based setup with AIEconomySDK
 
@@ -91,10 +121,10 @@ sdk = AIEconomySDK(
 def analyze(data: str) -> str:
     return f"analyzed: {data}"
 
-app = sdk.build_app()
+app = sdk.build_app(transport="streamable-http")
 ```
 
-`pricing_func` receives the tool arguments and the caller's verified address (or `None`). A function that accepts only `args` also works. See the [`AIEconomySDK` reference](/reference/python/ai-economy-sdk/ai-economy-sdk).
+`pricing_func` receives the tool arguments and the caller's verified address (or `None`). A function that accepts only `args` also works; one that accepts neither raises `ConfigurationError` when the tool is registered. `build_app(transport=...)` forwards to `PaymentGate.wrap()`. See the [`AIEconomySDK` reference](/reference/python/ai-economy-sdk/ai-economy-sdk).
 
 ## Complete example
 
@@ -104,7 +134,7 @@ app = sdk.build_app()
 """FastMCP server payment-gated with ai-economy-sdk on Algorand LocalNet.
 
 Runs a FastMCP server with a single paid 'echo' tool priced at 5,000 microALGO.
-Funds a server account from LocalNet dispenser and serves SSE requests on port 9201.
+Funds a server account from LocalNet dispenser and serves Streamable HTTP (/mcp) on port 9201.
 
 How to run:
     python localnet/quickstart_server.py
@@ -146,7 +176,7 @@ def main() -> None:
         prices={"echo": TOOL_PRICE_MICROALGO},
     )
 
-    app = gate.wrap(mcp)
+    app = gate.wrap(mcp, transport="streamable-http")
     uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning")
 
 

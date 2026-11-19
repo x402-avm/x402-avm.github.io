@@ -28,6 +28,7 @@ gate = PaymentGate(
     prices={"analyze": 100_000},      # 0.10 USDC
     replay_db="/var/data/replay.db",  # shared by all workers
 )
+app = gate.wrap(mcp, transport="streamable-http")  # serve with: uvicorn module:app
 ```
 
 The parameters of each network are printed by the [localnet/networks.py](https://github.com/x402-avm/examples/blob/main/localnet/networks.py) example and listed on [Networks](/networks).
@@ -40,11 +41,12 @@ The parameters of each network are printed by the [localnet/networks.py](https:/
 
 ```python
 from algosdk import transaction
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
 
 def opt_in(algod_client, address: str, private_key: str, asset_id: int) -> None:
     sp = algod_client.suggested_params()
     txn = transaction.AssetTransferTxn(sender=address, sp=sp, receiver=address, amt=0, index=asset_id)
-    txid = algod_client.send_transaction(txn.sign(private_key))
+    txid = algod_client.send_transaction(AccountTransactionSigner(private_key).sign_transactions([txn], [0])[0])
     transaction.wait_for_confirmation(algod_client, txid, 4)
 ```
 
@@ -66,7 +68,7 @@ else:
     raise RuntimeError("missing server credentials")
 ```
 
-`DefaultAvmSigner` keeps the key in process memory and signs only the transactions it is asked to sign: the fee payer transaction of each group. Keep the fee payer account separate from the account that collects revenue, and hold only working capital in it.
+`DefaultAvmSigner` keeps the key in process memory and signs only the transactions it is asked to sign: the fee payer transaction of each group. Since 0.5.0 the key is not in a public attribute and `repr()` shows only the address; `DefaultAvmSigner.private_key` is read-only and deprecated, so keep your own reference to the key if you need it. Keep the fee payer account separate from the account that collects revenue, and hold only working capital in it.
 
 ## Fund the fee payer
 
@@ -78,7 +80,7 @@ The fee payer pays 2,000 microALGO per settled call (transaction 0 of the group 
 | 5,000 | 10 ALGO |
 | 50,000 | 100 ALGO |
 
-Alert when the balance drops below a threshold (for example 5 ALGO), and remember the 0.1 ALGO minimum balance. When the fee payer cannot pay, settlement fails and callers receive `ToolError("payment settlement failed: ...")`; they are not charged.
+Alert when the balance drops below a threshold (for example 5 ALGO), and remember the 0.1 ALGO minimum balance. When the fee payer cannot pay, settlement fails and callers receive `SettlementError("payment settlement failed: ...")`; they are not charged.
 
 ## Run several workers
 
@@ -89,7 +91,7 @@ The default replay store lives in one process's memory. With `uvicorn app:app --
 1. **Fee payer balance**: `algod_client.account_info(address)["amount"]` on a schedule.
 2. **Settlement latency**: time from tool completion to confirmation.
 3. **Replay rejections**: `402` with `{"error": "Replay detected"}` may indicate a misbehaving client or an attack.
-4. **Logs**: `logging.getLogger("ai_economy_sdk").setLevel(logging.INFO)` records settlement outcomes and fee floor warnings.
+4. **Logs**: the `ai_economy_sdk` logger records refused calls, settlement failures, expired reservations and failed chain lookups at `WARNING`; `x402_algorand` logs fee payer signing, simulation and settlement failures. Attach a handler, for example `logging.basicConfig(level=logging.WARNING)`.
 
 ## Checklist
 

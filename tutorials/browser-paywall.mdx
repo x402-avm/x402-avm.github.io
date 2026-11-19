@@ -13,9 +13,9 @@ You will build a web page whose premium report unlocks after the visitor pays 4,
 
 ## Prerequisites
 
-- Python 3.10+ and Node.js 18+.
+- Python 3.10+ and Node.js 20+.
 - LocalNet running.
-- The files in `localnet/browser_paywall/` of the [examples repository](https://github.com/x402-avm/examples). From the repository root, install the dependencies (`requirements.txt` pins `ai-economy-sdk==0.4.1` and `x402-algorand==0.2.1`; `package.json` has `x402-avm-js`, `algosdk` and `esbuild`):
+- The files in `localnet/browser_paywall/` of the [examples repository](https://github.com/x402-avm/examples). From the repository root, install the dependencies (`requirements.txt` pins `ai-economy-sdk==0.5.0` and `x402-algorand==0.3.0`; `package.json` has `x402-avm-js` 0.4, `algosdk` and `esbuild`):
 
 ```bash
 pip install -r requirements.txt
@@ -29,156 +29,59 @@ npm install
     {/* example: localnet/browser_paywall/server.py */}
 
     ```python localnet/browser_paywall/server.py expandable
-    """Browser paywall tutorial server.
+    """Browser paywall server: serves the static page and charges 4,000 microALGO for /api/premium.
 
-    Serves a static web page and protects a premium endpoint (/api/premium)
-    using x402 payment middleware on port 9232 (4,000 microALGO per request).
-
-    How to run:
-        python server.py
-
-    Expected output:
-        Server running on http://127.0.0.1:9232
+        python localnet/browser_paywall/server.py     # http://127.0.0.1:9232
     """
+    import sys
     from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
     import uvicorn
-    from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
+    from fastapi import FastAPI
     from fastapi.staticfiles import StaticFiles
-    from algosdk import account, kmd, transaction
-    from algosdk.v2client import algod
-    from x402 import x402ResourceServer, x402Facilitator
-    from x402_algorand.exact.register import register_exact_avm_server, register_exact_avm_facilitator
-    from x402.http import x402HTTPResourceServer, HTTPRequestContext
-    from x402.http.middleware.fastapi import FastAPIAdapter
-    from ai_economy_sdk import DefaultAvmSigner, resolve_network
+    from x402 import x402Facilitator, x402ResourceServer
+    from x402.http.middleware.fastapi import payment_middleware
+    from x402_algorand import ServerAvmSigner, caip2_from_genesis_hash
+    from x402_algorand.exact import register_exact_avm_facilitator, register_exact_avm_server
 
-    ALGOD = algod.AlgodClient("a" * 64, "http://localhost:4001")
+    from _localnet import ALGOD, new_funded_account
 
 
-    def dispenser():
-        """Retrieve LocalNet dispenser account from KMD."""
-        k = kmd.KMDClient("a" * 64, "http://localhost:4002")
-        w = next(x for x in k.list_wallets() if x["name"] == "unencrypted-default-wallet")
-        h = k.init_wallet_handle(w["id"], "")
-        addr = max(k.list_keys(h), key=lambda a: ALGOD.account_info(a)["amount"])
-        return addr, k.export_key(h, "", addr)
-
-
-    def new_funded_account(algos=10):
-        """Generate a new account funded from the LocalNet dispenser."""
-        sk, addr = account.generate_account()
-        d_addr, d_sk = dispenser()
-        sp = ALGOD.suggested_params()
-        txn = transaction.PaymentTxn(d_addr, sp, addr, algos * 1_000_000)
-        ALGOD.send_transaction(txn.sign(d_sk))
-        transaction.wait_for_confirmation(ALGOD, txn.get_txid(), 10)
-        return sk, addr
-
-
-    def create_app():
-        network = resolve_network("localnet", ALGOD)
-
-        # Fund server account on LocalNet
-        server_sk, server_addr = new_funded_account(algos=5)
-        signer = DefaultAvmSigner(server_sk, algod_client=ALGOD)
+    def create_app() -> FastAPI:
+        network = caip2_from_genesis_hash(ALGOD.suggested_params().gh)
+        signer = ServerAvmSigner.from_private_key(new_funded_account()[0], ALGOD)
 
         facilitator = x402Facilitator()
         register_exact_avm_facilitator(facilitator, signer, network)
-
-        server = x402ResourceServer(facilitator_clients=facilitator)
+        server = x402ResourceServer(facilitator)
         register_exact_avm_server(server)
 
-        routes = {
-            "GET /api/premium": {
-                "accepts": [
-                    {
-                        "scheme": "exact",
-                        "pay_to": server_addr,
-                        "price": {"amount": "4000", "asset": "0"},
-                        "network": network,
-                    }
-                ],
-                "description": "Deep sea exploration premium report",
-            }
-        }
+        routes = {"GET /api/premium": {
+            "accepts": [{"scheme": "exact", "pay_to": signer.address,
+                         "price": {"amount": "4000", "asset": "0"}, "network": network}],
+            "description": "Deep sea exploration premium report",
+        }}
 
-        http_server = x402HTTPResourceServer(server, routes)
-        http_server.initialize()
-
-        app = FastAPI(title="Browser Paywall Tutorial")
-
-        @app.middleware("http")
-        async def x402_gate(request: Request, call_next):
-            adapter = FastAPIAdapter(request)
-            context = HTTPRequestContext(
-                adapter=adapter,
-                path=request.url.path,
-                method=request.method,
-                payment_header=(
-                    adapter.get_header("payment-signature") or adapter.get_header("x-payment")
-                ),
-            )
-
-            if not http_server.requires_payment(context):
-                return await call_next(request)
-
-            result = await http_server.process_http_request(context)
-
-            if result.type == "no-payment-required":
-                return await call_next(request)
-
-            if result.type == "payment-error":
-                response = result.response
-                if response is None:
-                    return JSONResponse(content={"error": "Payment required"}, status_code=402)
-                return JSONResponse(
-                    content=response.body or {},
-                    status_code=response.status,
-                    headers=response.headers,
-                )
-
-            if result.type == "payment-verified":
-                settle_result = await http_server.process_settlement(
-                    result.payment_payload,
-                    result.payment_requirements,
-                )
-                if not settle_result.success:
-                    return JSONResponse(
-                        content={
-                            "error": "Settlement failed",
-                            "details": settle_result.error_reason,
-                        },
-                        status_code=402,
-                    )
-
-                # Proceed to protected route
-                response = await call_next(request)
-                for k, v in settle_result.headers.items():
-                    response.headers[k] = v
-                return response
-
-            return await call_next(request)
+        app = FastAPI(title="Browser Paywall")
+        app.middleware("http")(payment_middleware(routes, server))
 
         @app.get("/api/premium")
-        def get_premium():
+        def premium():
             return {
                 "title": "Deep Sea Hydrothermal Vent Survey",
                 "findings": "Dense polymetallic sulfides discovered at depth 2,400m.",
                 "status": "unlocked",
             }
 
-        # Mount static assets directory
-        static_dir = Path(__file__).parent.resolve()
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
-
+        app.mount("/", StaticFiles(directory=Path(__file__).parent, html=True), name="static")
         return app
 
 
     if __name__ == "__main__":
-        app = create_app()
-        print("Server starting on http://127.0.0.1:9232 ...", flush=True)
-        uvicorn.run(app, host="127.0.0.1", port=9232, log_level="warning")
+        print("Browser paywall on http://127.0.0.1:9232", flush=True)
+        uvicorn.run(create_app(), host="127.0.0.1", port=9232, log_level="warning")
     ```
 
     <sub>Source: [examples/localnet/browser_paywall/server.py](https://github.com/x402-avm/examples/blob/main/localnet/browser_paywall/server.py)</sub>
@@ -277,64 +180,43 @@ npm install
 
     {/* example: localnet/browser_paywall/app.js */}
 
-    ```javascript localnet/browser_paywall/app.js expandable
+    ```javascript localnet/browser_paywall/app.js
     /**
-     * Browser paywall client application using x402-avm-js.
-     *
-     * Demonstrates the 402 payment flow in the browser:
-     * 1. Requests /api/premium -> catches HTTP 402 with PAYMENT-REQUIRED header.
-     * 2. Decodes requirement with decodePaymentRequired().
-     * 3. Builds and signs exact AVM payment group with payForRequirement().
-     * 4. Retries request with PAYMENT-SIGNATURE header to unlock content.
+     * Browser paywall client (x402-avm-js): fetch /api/premium, pay the 402 challenge with the
+     * caller's wallet signer, retry with PAYMENT-SIGNATURE.
      */
-    import { decodePaymentRequired, payForRequirement } from 'x402-avm-js';
     import algosdk from 'algosdk';
+    import { PaymentNotAllowedError, SpendLimitExceededError, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+
+    // Never pay more than 0.01 ALGO per request, whatever the server asks for.
+    const SPEND_CONTROLS = { maxAmount: 10_000n, allowedAssets: ['0'] };
 
     export async function fetchPremiumContent(
       payerAddress,
       signTxns,
       algodUrl = 'http://localhost:4001',
-      algodToken = 'a'.repeat(64)
+      algodToken = 'a'.repeat(64),
     ) {
-      // 1. Initial request without payment header
-      const initialRes = await fetch('/api/premium');
-      if (initialRes.status === 200) {
-        return await initialRes.json();
-      }
-      if (initialRes.status !== 402) {
-        throw new Error(`Unexpected server response: HTTP ${initialRes.status}`);
-      }
+      const first = await fetch('/api/premium');
+      if (first.status === 200) return first.json();
+      if (first.status !== 402) throw new Error(`Unexpected server response: HTTP ${first.status}`);
 
-      // 2. Extract PAYMENT-REQUIRED header
-      const reqHeader = initialRes.headers.get('payment-required');
-      if (!reqHeader) {
-        throw new Error('Missing payment-required header in 402 response');
-      }
+      const challenge = decodePaymentRequired(first.headers.get('payment-required'));
+      const algod = new algosdk.Algodv2(algodToken, algodUrl, '');
 
-      // 3. Decode payment requirement
-      const paymentRequired = decodePaymentRequired(reqHeader);
-      const algodClient = new algosdk.Algodv2(algodToken, algodUrl, '');
-
-      // 4. Construct and sign payment group using provided wallet signer callback
-      const paymentSignature = await payForRequirement(
-        paymentRequired,
-        payerAddress,
-        algodClient,
-        signTxns
-      );
-
-      // 5. Retry request with PAYMENT-SIGNATURE header
-      const paidRes = await fetch('/api/premium', {
-        headers: {
-          'payment-signature': paymentSignature,
-        },
-      });
-
-      if (paidRes.status !== 200) {
-        throw new Error(`Payment settlement refused by server: HTTP ${paidRes.status}`);
+      let signature;
+      try {
+        signature = await payForRequirement(challenge, payerAddress, algod, signTxns, SPEND_CONTROLS);
+      } catch (err) {
+        if (err instanceof SpendLimitExceededError || err instanceof PaymentNotAllowedError) {
+          throw new Error(`Payment refused by spend controls: ${err.message}`);
+        }
+        throw err;
       }
 
-      return await paidRes.json();
+      const paid = await fetch('/api/premium', { headers: { 'payment-signature': signature } });
+      if (paid.status !== 200) throw new Error(`Payment refused by server: HTTP ${paid.status}`);
+      return paid.json();
     }
     ```
 
@@ -355,161 +237,37 @@ npm install
 
     {/* example: localnet/browser_paywall/verify.mjs */}
 
-    ```javascript localnet/browser_paywall/verify.mjs expandable
+    ```javascript localnet/browser_paywall/verify.mjs
     /**
-     * Verification script for browser_paywall tutorial.
+     * Runs the same x402 client flow as app.js from Node against the paywall on port 9232
+     * (start browser_paywall/server.py first):
      *
-     * Exercises the identical x402 client workflow and library functions as app.js
-     * against the FastAPI server on port 9232.
-     *
-     * Note: The browser page itself is not run in this automated verification;
-     * this script executes the identical client flow using Node.js.
-     *
-     * How to run:
-     *   node verify.mjs
+     *   node localnet/browser_paywall/verify.mjs
      */
-    import algosdk from 'algosdk';
     import { decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+    import { algod, newFundedAccount, signerFor } from '../_localnet.mjs';
 
-    const ALGOD_URL = 'http://127.0.0.1';
-    const ALGOD_PORT = 4001;
-    const ALGOD_TOKEN = 'a'.repeat(64);
-    const KMD_URL = 'http://127.0.0.1';
-    const KMD_PORT = 4002;
-    const KMD_TOKEN = 'a'.repeat(64);
-    const SERVER_URL = 'http://127.0.0.1:9232/api/premium';
+    const URL = 'http://127.0.0.1:9232/api/premium';
+    const balance = async (addr) => (await algod.accountInformation(addr).do()).amount;
 
-    const algodClient = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_URL, ALGOD_PORT);
+    const buyer = await newFundedAccount(5);
+    const before = await balance(buyer.address);
 
-    async function getDispenser() {
-      const kmdClient = new algosdk.Kmd(KMD_TOKEN, KMD_URL, KMD_PORT);
-      const wallets = (await kmdClient.listWallets()).wallets;
-      const defaultWallet = wallets.find((w) => w.name === 'unencrypted-default-wallet');
-      const handle = (await kmdClient.initWalletHandle(defaultWallet.id, '')).wallet_handle_token;
-      const keys = (await kmdClient.listKeys(handle)).addresses;
+    const res402 = await fetch(URL);
+    if (res402.status !== 402) throw new Error(`Expected 402, got ${res402.status}`);
+    const challenge = decodePaymentRequired(res402.headers.get('payment-required'));
+    const [req] = challenge.accepts;
+    console.log(`402: ${req.amount} units of asset ${req.asset} to ${req.payTo} on ${req.network}`);
 
-      let maxBalance = 0n;
-      let dispenserAddr = keys[0];
-      for (const addr of keys) {
-        const info = await algodClient.accountInformation(addr).do();
-        const bal = BigInt(info.amount);
-        if (bal > maxBalance) {
-          maxBalance = bal;
-          dispenserAddr = addr;
-        }
-      }
+    const signature = await payForRequirement(challenge, buyer.address, algod, signerFor(buyer.sk));
+    const paid = await fetch(URL, { headers: { 'payment-signature': signature } });
+    if (paid.status !== 200) throw new Error(`Expected 200, got ${paid.status}: ${await paid.text()}`);
+    console.log('Unlocked:', await paid.json());
 
-      const exportResp = await kmdClient.exportKey(handle, '', dispenserAddr);
-      return { address: dispenserAddr, privateKey: exportResp.private_key };
-    }
-
-    async function createFundedAccount(algos = 5) {
-      const account = algosdk.generateAccount();
-      const dispenser = await getDispenser();
-      const sp = await algodClient.getTransactionParams().do();
-      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: dispenser.address,
-        receiver: account.addr,
-        amount: algos * 1_000_000,
-        suggestedParams: sp,
-      });
-
-      const signed = txn.signTxn(dispenser.privateKey);
-      const sendRes = await algodClient.sendRawTransaction(signed).do();
-      const txId = sendRes.txid || sendRes.txId;
-      await algosdk.waitForConfirmation(algodClient, txId, 10);
-      return account;
-    }
-
-    async function main() {
-      console.log('--- Browser Paywall Verification (Node.js) ---');
-      console.log('Note: The browser page itself is not run; this script tests the exact x402 functions used in app.js.\n');
-
-      console.log('1. Generating funded buyer account on LocalNet...');
-      const buyer = await createFundedAccount(5);
-      const buyerAddr = buyer.addr.toString ? buyer.addr.toString() : buyer.addr;
-      const initialInfo = await algodClient.accountInformation(buyerAddr).do();
-      const initialBalance = Number(initialInfo.amount);
-      console.log(`Buyer account: ${buyerAddr}`);
-      console.log(`Initial balance: ${initialBalance} microALGO (${initialBalance / 1_000_000} ALGO)`);
-
-      console.log('\n2. Sending initial unauthenticated request to GET /api/premium ...');
-      const res1 = await fetch(SERVER_URL);
-      console.log(`Received status: HTTP ${res1.status}`);
-
-      if (res1.status !== 402) {
-        throw new Error(`Expected HTTP 402 Payment Required, got ${res1.status}`);
-      }
-
-      const payReqHeader = res1.headers.get('payment-required');
-      if (!payReqHeader) {
-        throw new Error('Server 402 response did not include payment-required header');
-      }
-
-      console.log('Decoded PAYMENT-REQUIRED header...');
-      const paymentRequired = decodePaymentRequired(payReqHeader);
-      const requirement = paymentRequired.accepts[0];
-      console.log(`- Scheme: ${requirement.scheme}`);
-      console.log(`- Price: ${requirement.amount} microALGO (asset: ${requirement.asset})`);
-      console.log(`- Pay To: ${requirement.payTo}`);
-      console.log(`- Network: ${requirement.network}`);
-
-      console.log('\n3. Building and signing exact AVM payment group with x402-avm-js...');
-      const signTxnsCallback = async (unsignedBytesList, indexes) => {
-        return unsignedBytesList.map((bytes, idx) => {
-          if (indexes.includes(idx)) {
-            const decoded = algosdk.decodeUnsignedTransaction(bytes);
-            return decoded.signTxn(buyer.sk);
-          }
-          return null;
-        });
-      };
-
-      const paymentSignature = await payForRequirement(
-        paymentRequired,
-        buyerAddr,
-        algodClient,
-        signTxnsCallback
-      );
-      console.log('Generated PAYMENT-SIGNATURE header.');
-
-      console.log('\n4. Retrying request with PAYMENT-SIGNATURE header...');
-      const res2 = await fetch(SERVER_URL, {
-        headers: {
-          'payment-signature': paymentSignature,
-        },
-      });
-
-      console.log(`Received status: HTTP ${res2.status}`);
-      if (res2.status !== 200) {
-        const errorBody = await res2.text();
-        throw new Error(`Expected HTTP 200 OK after payment, got ${res2.status}: ${errorBody}`);
-      }
-
-      const unlockedData = await res2.json();
-      console.log('Unlocked content:');
-      console.log(JSON.stringify(unlockedData, null, 2));
-
-      console.log('\n5. Verifying on-chain balance change...');
-      // Wait a short moment for settlement confirmation
-      await new Promise((r) => setTimeout(r, 1500));
-      const finalInfo = await algodClient.accountInformation(buyerAddr).do();
-      const finalBalance = Number(finalInfo.amount);
-      const balanceDrop = initialBalance - finalBalance;
-      console.log(`Final balance: ${finalBalance} microALGO`);
-      console.log(`Balance drop: ${balanceDrop} microALGO (price: ${requirement.amount} microALGO)`);
-
-      if (balanceDrop < Number(requirement.amount)) {
-        throw new Error(`Expected balance drop of at least ${requirement.amount}, got ${balanceDrop}`);
-      }
-
-      console.log('\n=== VERIFICATION SUCCESS: HTTP 200 received and balance drop confirmed! ===');
-    }
-
-    main().catch((err) => {
-      console.error('Verification failed:', err);
-      process.exit(1);
-    });
+    const drop = before - (await balance(buyer.address));
+    console.log(`Balance drop: ${drop} microALGO`);
+    if (drop !== BigInt(req.amount)) throw new Error(`Expected a drop of ${req.amount}, got ${drop}`);
+    console.log('Browser paywall verified.');
     ```
 
     <sub>Source: [examples/localnet/browser_paywall/verify.mjs](https://github.com/x402-avm/examples/blob/main/localnet/browser_paywall/verify.mjs)</sub>
@@ -526,7 +284,7 @@ npm install
     ```
 
     ```text
-    Server starting on http://127.0.0.1:9232 ...
+    Browser paywall on http://127.0.0.1:9232
     ```
 
     In a second terminal:
@@ -536,38 +294,14 @@ npm install
     ```
 
     ```text
-    --- Browser Paywall Verification (Node.js) ---
-    Note: The browser page itself is not run; this script tests the exact x402 functions used in app.js.
-
-    1. Generating funded buyer account on LocalNet...
-    Buyer account: XWU52B2M55ZNZ3M4NLJ7HWMJGVP6VBZGIYMX3PB2JAQGD4EKMME3MOG2YU
-    Initial balance: 5000000 microALGO (5 ALGO)
-
-    2. Sending initial unauthenticated request to GET /api/premium ...
-    Received status: HTTP 402
-    Decoded PAYMENT-REQUIRED header...
-    - Scheme: exact
-    - Price: 4000 microALGO (asset: 0)
-    - Pay To: E6WY6SZ3HRVN3HYE74CMSSLLGONGMENASAZO23A2QWHDK5VZ2LAP3ULB4U
-    - Network: algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY
-
-    3. Building and signing exact AVM payment group with x402-avm-js...
-    Generated PAYMENT-SIGNATURE header.
-
-    4. Retrying request with PAYMENT-SIGNATURE header...
-    Received status: HTTP 200
-    Unlocked content:
-    {
-      "title": "Deep Sea Hydrothermal Vent Survey",
-      "findings": "Dense polymetallic sulfides discovered at depth 2,400m.",
-      "status": "unlocked"
+    402: 4000 units of asset 0 to P4MQF6EJEYT3W4MA2OS2M6JLPYV2JXNFGLT2ER6S3UNII7JDOM3SJRHPDU on algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY
+    Unlocked: {
+      title: 'Deep Sea Hydrothermal Vent Survey',
+      findings: 'Dense polymetallic sulfides discovered at depth 2,400m.',
+      status: 'unlocked'
     }
-
-    5. Verifying on-chain balance change...
-    Final balance: 4996000 microALGO
-    Balance drop: 4000 microALGO (price: 4000 microALGO)
-
-    === VERIFICATION SUCCESS: HTTP 200 received and balance drop confirmed! ===
+    Balance drop: 4000 microALGO
+    Browser paywall verified.
     ```
   </Step>
 </Steps>

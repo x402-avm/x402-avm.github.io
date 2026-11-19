@@ -22,7 +22,7 @@ A network id is `algorand:` plus the first 32 characters of the URL-safe base64 
 | `resolveNetwork(name)` | `"mainnet"`, `"testnet"`, `"algorand-mainnet"`, `"algorand-testnet"`, `"algorand"`, a short id or a legacy id | The short id. Throws for anything else, including `"localnet"`. |
 | `networkFromGenesisHash(hash)` | Base64 string or `Uint8Array` | The short id |
 | `networkFromAlgod(algod)` | An `Algodv2` client | The id of the node's network (async) |
-| `algodClient(network, url?, token?)` | `"mainnet"`, `"testnet"`, `"localnet"` or an id with a `url` | An `Algodv2` client |
+| `algodClient(network, url?, token?)` | `"mainnet"`, `"testnet"`, or an id with a `url` (see the LocalNet warning below) | An `Algodv2` client |
 
 ## Resolve networks
 
@@ -42,11 +42,16 @@ await networkFromAlgod(algodClient('testnet'));  // same as TESTNET.caip2
 A LocalNet's genesis hash changes when it is reset, so read its id from the node instead of hard-coding it:
 
 ```ts
-import { algodClient, networkFromAlgod } from 'x402-avm-js';
+import algosdk from 'algosdk';
+import { LOCALNET_ENDPOINTS, networkFromAlgod } from 'x402-avm-js';
 
-const algod = algodClient('localnet');
+const algod = new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl);
 console.log(await networkFromAlgod(algod));
 ```
+
+<Warning>
+  In x402-avm-js 0.4.0, `algodClient('localnet')` returns a client that connects to port 80 instead of 4001 (it passes an empty port to `algosdk.Algodv2`, which overrides the port in the URL). Create the LocalNet client with algosdk directly, as above: `new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl)`. `algodClient('mainnet')` and `algodClient('testnet')` are not affected.
+</Warning>
 
 `payForRequirement` does this itself: it reads the network from the algod you pass and pays the matching offer.
 

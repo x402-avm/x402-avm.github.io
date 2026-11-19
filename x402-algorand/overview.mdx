@@ -4,10 +4,10 @@ sidebarTitle: "Overview"
 description: "The Algorand (AVM) exact payment scheme as a plugin for the official x402 Python SDK."
 ---
 
-`x402-algorand` (PyPI, Apache-2.0, version 0.2.1, import name `x402_algorand`) adds Algorand to the official [x402 Python SDK](https://github.com/x402-foundation/x402) maintained by the x402 Foundation. It implements the `exact` scheme for native ALGO and for Algorand Standard Assets such as USDC.
+`x402-algorand` (PyPI, Apache-2.0, version 0.3.0, import name `x402_algorand`) adds Algorand to the official [x402 Python SDK](https://github.com/x402-foundation/x402) maintained by the x402 Foundation. It implements the `exact` scheme for native ALGO and for Algorand Standard Assets such as USDC.
 
 ```bash
-pip install x402-algorand==0.2.1
+pip install x402-algorand==0.3.0
 ```
 
 This installs the official `x402` package (2.28 or later, below 3) and `py-algorand-sdk`.
@@ -17,7 +17,7 @@ This installs the official `x402` package (2.28 or later, below 3) and `py-algor
 | Package | Provides |
 |---|---|
 | `x402` (official SDK) | `x402Client`, `x402ResourceServer`, `x402Facilitator` and their sync variants; payment schemas; spend controls; HTTP header encoding; FastAPI and Flask middleware; httpx and requests clients. |
-| `x402_algorand` (this plugin) | Client, server and facilitator implementations of the Algorand exact scheme; registration helpers; signer protocols; CAIP-2 utilities; transaction decoding and security checks; Algorand constants and error codes. |
+| `x402_algorand` (this plugin) | Client, server and facilitator implementations of the Algorand exact scheme; registration helpers; signer protocols and ready-made signers (`PayerAvmSigner`, `ServerAvmSigner`); exception classes; CAIP-2 utilities; transaction decoding and security checks; Algorand constants and error codes. |
 
 The upstream SDK also ships EVM and SVM schemes. `x402-algorand` adds the AVM using Algorand atomic groups, a fee payer that sponsors the buyer's fee, and instant finality.
 
@@ -26,9 +26,11 @@ The upstream SDK also ships EVM and SVM schemes. `x402-algorand` adds the AVM us
 ## Register the scheme
 
 ```python
+import os
+
 from x402 import x402Client, x402Facilitator, x402ResourceServer
-from x402_algorand.constants import ALGORAND_TESTNET_CAIP2
-from x402_algorand.exact.register import (
+from x402_algorand import ALGORAND_TESTNET_CAIP2, PayerAvmSigner, ServerAvmSigner
+from x402_algorand.exact import (
     register_exact_avm_client,
     register_exact_avm_facilitator,
     register_exact_avm_server,
@@ -36,9 +38,10 @@ from x402_algorand.exact.register import (
 
 # Client: pays 402 challenges
 client = x402Client()
-register_exact_avm_client(client, client_signer)
+register_exact_avm_client(client, PayerAvmSigner.from_mnemonic(os.environ["PAYER_MNEMONIC"]))
 
-# Facilitator: verifies and settles payments
+# Facilitator: verifies and settles payments; its account sponsors the fees
+facilitator_signer = ServerAvmSigner.from_mnemonic(os.environ["FACILITATOR_MNEMONIC"])
 facilitator = x402Facilitator()
 register_exact_avm_facilitator(facilitator, facilitator_signer, ALGORAND_TESTNET_CAIP2)
 
@@ -47,7 +50,22 @@ server = x402ResourceServer(facilitator)
 register_exact_avm_server(server)
 ```
 
-`client_signer` implements [`ClientAvmSigner`](/reference/python/x402-algorand/client-avm-signer) and `facilitator_signer` implements [`FacilitatorAvmSigner`](/reference/python/x402-algorand/facilitator-avm-signer). `DefaultAvmSigner` from `ai-economy-sdk` implements both.
+## Signers
+
+`x402-algorand` 0.3.0 ships two signers backed by an Algorand private key (base64, as returned by `algosdk`) or a 25-word mnemonic:
+
+| Class | Role | Constructors |
+|---|---|---|
+| [`PayerAvmSigner`](/reference/python/x402-algorand/payer-avm-signer) | [`ClientAvmSigner`](/reference/python/x402-algorand/client-avm-signer): signs the buyer's payment transaction. | `from_private_key(key)`, `from_mnemonic(words)` |
+| [`ServerAvmSigner`](/reference/python/x402-algorand/server-avm-signer) | [`FacilitatorAvmSigner`](/reference/python/x402-algorand/facilitator-avm-signer): signs fee payer transactions, simulates, sends and confirms groups. Also implements `ClientAvmSigner`. | `from_private_key(key, algod_client=None, *, algod_url=None, algod_token=None)`, `from_mnemonic(...)`, or `ServerAvmSigner([key1, key2], ...)` for several fee payers |
+
+- Keys are kept in private attributes and are not included in `repr()`, exception messages or logs. A malformed key or mnemonic raises `SigningError`.
+- `ServerAvmSigner` with an algod client (or `algod_url`) checks, on first use for a network, that the node's genesis hash matches that network, and raises `NetworkMismatchError` otherwise. Without one, it uses the algod URL configured for the network in `NETWORK_CONFIGS` (MainNet and TestNet AlgoNode defaults, or a network added with `register_network`).
+- To keep keys in a KMS, HSM or wallet, implement the `ClientAvmSigner` / `FacilitatorAvmSigner` protocols from `x402_algorand.signer` instead. `DefaultAvmSigner` from `ai-economy-sdk` also implements both.
+
+## Errors
+
+Exceptions derive from `X402AlgorandError`: `NetworkError`, `NetworkMismatchError`, `TransactionDecodeError`, `SigningError`, `SimulationError`. Each also derives from the built-in type raised before 0.3.0 (`ValueError` or `RuntimeError`), so existing handlers keep working. An invalid payment never raises: `verify()` and `settle()` return a protocol error code. See [Errors and error codes](/resources/error-codes#x402-algorand-exceptions).
 
 ## Network ids
 
@@ -58,6 +76,17 @@ register_exact_avm_server(server)
 | LocalNet | read from algod | `algorand:` + first 32 URL-safe base64 characters |
 
 See [Custom networks](/x402-algorand/custom-networks).
+
+## Upgrading to 0.3
+
+0.3.0 is backward compatible for code written against 0.2.x. Changes you may notice:
+
+- Hand-written signers can be replaced by `PayerAvmSigner` and `ServerAvmSigner`.
+- Errors for unsupported networks, wrong-network algod nodes and undecodable transactions are `NetworkError`, `NetworkMismatchError` and `TransactionDecodeError` (all still `ValueError`s).
+- `settle()` returns the ID of the buyer's payment transaction (`paymentGroup[paymentIndex]`), as the specification requires. With a fee payer, 0.2.x returned the ID of the fee payer transaction.
+- Payments authorized by a k-of-n multisig, a logic signature, or the auth address of a rekeyed account are accepted. A rekey pair is only accepted when the second rekey returns authority to the sender.
+- The V1 facilitator and client wrappers accept the official SDK's `PaymentPayloadV1` / `PaymentRequirementsV1` models, so V1 payments routed through `x402Facilitator` / `x402Client` work.
+- `x402_algorand.__version__` and a `py.typed` marker; Python 3.14 is supported.
 
 ## Migrating from 0.1.x
 

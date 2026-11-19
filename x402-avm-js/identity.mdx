@@ -52,82 +52,37 @@ This script builds and signs a proof in JavaScript and verifies it with the Pyth
 
 {/* example: localnet/identity.mjs */}
 
-```javascript localnet/identity.mjs expandable
+```javascript localnet/identity.mjs
 /**
- * Off-chain wallet identity proof generation and verification.
+ * Build an X-Identity-Txn proof in JavaScript and verify it with the Python SDK.
  *
- * Demonstrates:
- * 1. Constructing an unsubmitted, zero-fee identity transaction using buildIdentityTxn().
- * 2. Signing the identity transaction with the wallet private key.
- * 3. Encoding the signed transaction into the X-Identity-Txn header value via encodeIdentityHeader().
- * 4. Verifying the cryptographic proof using Python ai_economy_sdk.verify_identity_txn via subprocess.
+ *   node localnet/identity.mjs        # set PYTHON to a interpreter that has ai-economy-sdk
  *
- * How to run:
- *   node localnet/identity.mjs
- *
- * What it prints:
- *   Generated address, encoded identity header, and the verified address returned by Python.
+ * The proof is an unsubmitted, zero-fee self-payment signed by the wallet and bound to one
+ * network's genesis hash.
  */
-
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import algosdk from 'algosdk';
-import {
-  MAINNET,
-  buildIdentityTxn,
-  encodeIdentityHeader,
-} from 'x402-avm-js';
+import { MAINNET, buildIdentityTxn, encodeIdentityHeader } from 'x402-avm-js';
 
-const PYTHON_BIN = process.env.PYTHON || 'python3';
-
-async function main() {
-  console.log('Generating test account...');
-  const account = algosdk.generateAccount();
-  const address = account.addr.toString();
-  console.log(`Account address: ${address}`);
-
-  const genesisHash = MAINNET.genesisHash;
-  console.log(`Network genesis hash: ${genesisHash}`);
-
-  // 1. Build unsubmitted 0-fee self-payment transaction
-  const txn = buildIdentityTxn(address, genesisHash);
-  console.log(`Identity txn note: ${new TextDecoder().decode(txn.note)}`);
-
-  // 2. Sign transaction with account secret key
-  const signedBytes = txn.signTxn(account.sk);
-
-  // 3. Encode to base64 header value
-  const headerValue = encodeIdentityHeader(signedBytes);
-  console.log(`Encoded X-Identity-Txn header: ${headerValue.slice(0, 40)}... (length: ${headerValue.length})`);
-
-  // 4. Verify identity transaction with Python ai_economy_sdk.verify_identity_txn
-  console.log('\nVerifying identity header with Python ai_economy_sdk.verify_identity_txn...');
-  const pythonScript = `
-import sys, json
+const PYTHON = process.env.PYTHON || 'python3';
+const VERIFY = `
+import sys
 from ai_economy_sdk import verify_identity_txn
-header = sys.argv[1]
-gh = sys.argv[2]
-verified_addr = verify_identity_txn(header, gh)
-print(json.dumps({"verified_address": verified_addr}))
+print(verify_identity_txn(sys.argv[1], sys.argv[2]))
 `;
 
-  const stdout = execFileSync(PYTHON_BIN, ['-c', pythonScript, headerValue, genesisHash], {
-    encoding: 'utf-8',
-  });
+const account = algosdk.generateAccount();
+const address = account.addr.toString();
+const txn = buildIdentityTxn(address, MAINNET.genesisHash);
+const header = encodeIdentityHeader(txn.signTxn(account.sk));
+console.log(`Account:  ${address}`);
+console.log(`Header:   ${header.slice(0, 40)}... (${header.length} chars)`);
 
-  const result = JSON.parse(stdout.trim());
-  console.log(`Python verification result: ${result.verified_address}`);
-
-  if (result.verified_address !== address) {
-    throw new Error(`Address mismatch: expected ${address}, got ${result.verified_address}`);
-  }
-
-  console.log('\nIdentity proof verified successfully.');
-}
-
-main().catch((err) => {
-  console.error('Identity verification failed:', err);
-  process.exit(1);
-});
+const verified = execFileSync(PYTHON, ['-c', VERIFY, header, MAINNET.genesisHash], { encoding: 'utf-8' }).trim();
+console.log(`Verified: ${verified}`);
+if (verified !== address) throw new Error(`Address mismatch: expected ${address}, got ${verified}`);
+console.log('Identity proof verified.');
 ```
 
 <sub>Source: [examples/localnet/identity.mjs](https://github.com/x402-avm/examples/blob/main/localnet/identity.mjs)</sub>

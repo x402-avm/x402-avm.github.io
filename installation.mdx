@@ -7,11 +7,25 @@ description: "Install ai-economy-sdk, x402-algorand and x402-avm-js, and set up 
 
 | Package | Registry | Version | Licence | Runtime |
 |---|---|---|---|---|
-| `ai-economy-sdk` | [PyPI](https://pypi.org/project/ai-economy-sdk/) | 0.4.1 | MIT | Python 3.10+ |
-| `x402-algorand` | [PyPI](https://pypi.org/project/x402-algorand/) | 0.2.1 | Apache-2.0 (with NOTICE) | Python 3.10+ |
-| `x402-avm-js` | [npm](https://www.npmjs.com/package/x402-avm-js) | 0.3.1 | MIT | Node.js 18+, browsers, workers |
+| `ai-economy-sdk` | [PyPI](https://pypi.org/project/ai-economy-sdk/) | 0.5.0 | MIT | Python 3.10–3.14 |
+| `x402-algorand` | [PyPI](https://pypi.org/project/x402-algorand/) | 0.3.0 | Apache-2.0 (with NOTICE) | Python 3.10–3.14 |
+| `x402-avm-js` | [npm](https://www.npmjs.com/package/x402-avm-js) | 0.4.0 | MIT | Node.js 20+, browsers, workers |
 
 `x402-algorand` is derived from GoPlausible's `x402-avm` 2.0.2 and plugs into the official `x402` Python SDK (`x402>=2.28,<3`) maintained by the x402 Foundation.
+
+## Compatibility
+
+Taken from each package's `pyproject.toml` / `package.json` and CI matrix.
+
+| Package | Version | Official `x402` (Python) | Python | Node.js | Other dependency ranges |
+|---|---|---|---|---|---|
+| `ai-economy-sdk` | 0.5.0 | `>=2.28,<3` | `>=3.10`; tested on 3.10, 3.11, 3.12, 3.13, 3.14 | | `x402-algorand>=0.2.1`, `fastmcp>=3.4,<4`, `mcp>=1.29,<2`, `py-algorand-sdk>=2.6`, `httpx>=0.27`, `uvicorn>=0.30` |
+| `x402-algorand` | 0.3.0 | `>=2.28,<3` | `>=3.10`; tested on 3.10, 3.11, 3.12, 3.13, 3.14 | | `py-algorand-sdk>=2.6`, `pynacl>=1.4` |
+| `x402-avm-js` | 0.4.0 | | | `>=20`; tested on 20, 22, 24 | `algosdk ^3.9.0` |
+
+Previous releases: `ai-economy-sdk` 0.4.1 and `x402-algorand` 0.2.1 declared Python 3.10 to 3.13 (`>=3.10`), the same `x402`, `fastmcp` and `mcp` ranges, and `ai-economy-sdk` 0.4.1 required `x402-algorand>=0.2.0`. `x402-avm-js` 0.3.1 declared Node.js `>=18`.
+
+`fastmcp` 4.x and `mcp` 2.x are excluded on purpose: the 0.4.1 release notes record upstream `httpx` changes in those majors that affect `x402` compatibility. These docs were checked on Python 3.14 with `x402` 2.28.0, `fastmcp` 3.4.11 and `mcp` 1.30.0, and on Node.js 24 with `algosdk` 3.9.0.
 
 ## Python
 
@@ -19,11 +33,11 @@ Installing `ai-economy-sdk` also installs `x402-algorand`, the official `x402` p
 
 <CodeGroup>
 ```bash pip
-pip install ai-economy-sdk==0.4.1
+pip install ai-economy-sdk==0.5.0
 ```
 
 ```bash uv
-uv pip install ai-economy-sdk==0.4.1
+uv pip install ai-economy-sdk==0.5.0
 ```
 </CodeGroup>
 
@@ -31,11 +45,11 @@ If you only need the payment scheme for the `x402` SDK (an HTTP API, a facilitat
 
 <CodeGroup>
 ```bash pip
-pip install x402-algorand==0.2.1
+pip install x402-algorand==0.3.0
 ```
 
 ```bash uv
-uv pip install x402-algorand==0.2.1
+uv pip install x402-algorand==0.3.0
 ```
 </CodeGroup>
 
@@ -47,15 +61,15 @@ The official SDK's framework integrations need their extras, for example `pip in
 
 <CodeGroup>
 ```bash npm
-npm install x402-avm-js@0.3.1 algosdk
+npm install x402-avm-js@0.4.0 algosdk
 ```
 
 ```bash pnpm
-pnpm add x402-avm-js@0.3.1 algosdk
+pnpm add x402-avm-js@0.4.0 algosdk
 ```
 
 ```bash yarn
-yarn add x402-avm-js@0.3.1 algosdk
+yarn add x402-avm-js@0.4.0 algosdk
 ```
 </CodeGroup>
 
@@ -89,10 +103,10 @@ More on LocalNet, including how its network id is derived: [LocalNet guide](/gui
 <CodeGroup>
 ```bash Python
 python -c '
-import x402, x402_algorand
-from ai_economy_sdk import AIEconomySDK, PaymentGate, paid_mcp_session
-print("x402 version:", x402.__version__)
-print("Imports verified successfully")
+import x402, x402_algorand, ai_economy_sdk
+print("ai-economy-sdk", ai_economy_sdk.__version__)
+print("x402-algorand", x402_algorand.__version__)
+print("x402", x402.__version__)
 '
 ```
 
@@ -104,8 +118,9 @@ node --input-type=module -e "import { resolveNetwork } from 'x402-avm-js'; conso
 Expected output (the `x402` version is the one pip resolved, 2.28 or later):
 
 ```text
-x402 version: 2.28.0
-Imports verified successfully
+ai-economy-sdk 0.5.0
+x402-algorand 0.3.0
+x402 2.28.0
 ```
 
 ```text

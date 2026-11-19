@@ -29,6 +29,17 @@ CAIP-2 network identifier.
 
 ## Raises
 
-- `ValueError`: If network is not supported or invalid format.
+- `NetworkError`: If network is not supported or invalid format (subclass of `ValueError`).
 
-<sub>Source: [x402_algorand/utils.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py#L132)</sub>
+## Examples
+
+```python
+from x402_algorand import normalize_network
+
+print(normalize_network("algorand-testnet"))
+# algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe
+print(normalize_network("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="))  # legacy id
+# algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k
+```
+
+<sub>Source: [x402_algorand/utils.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py#L153)</sub>

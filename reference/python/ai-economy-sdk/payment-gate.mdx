@@ -11,13 +11,13 @@ from ai_economy_sdk import PaymentGate
 
 ```python Signature
 class PaymentGate(
-    signer: Any,
+    signer: ServerSigner,
     network: str,
     pay_to: str,
     asset_id: int | str = 0,
-    prices: Any = None,
+    prices: Prices | None = None,
     default_price: int = 0,
-    chain: Any = None,
+    chain: ChainLookup | None = None,
     subscription_asset_id: int | str | None = None,
     subscription_max_age_days: float = 30.0,
     bulk_threshold: int | None = None,
@@ -35,8 +35,9 @@ class PaymentGate(
 
 Payment gate protecting FastMCP server tools with x402 on Algorand.
 
-Integrates payment challenges, verification, and settlement into FastMCP SSE endpoints.
-Supports fixed, dynamic, subscription-based, pass-based, and tiered bulk pricing.
+Integrates payment challenges, verification, and settlement into FastMCP's HTTP
+transports (Streamable HTTP and legacy SSE). Supports fixed, dynamic,
+subscription-based, pass-based, and tiered bulk pricing.
 
 **Notes**
 
@@ -47,9 +48,9 @@ Settles on chain only if tool succeeds.
 
 ## Constructor parameters
 
-<ParamField body="signer" type="Any" required>
-Signer instance (e.g., `DefaultAvmSigner`) providing merchant keys and
-node connection to sponsor transaction fees as fee payer.
+<ParamField body="signer" type="ServerSigner" required>
+Signer (e.g., `DefaultAvmSigner`) providing merchant keys and node
+connection to sponsor transaction fees as fee payer.
 </ParamField>
 
 <ParamField body="network" type="str" required>
@@ -61,10 +62,10 @@ Algorand address where service payments are collected.
 </ParamField>
 
 <ParamField body="asset_id" type="int | str" default="0">
-Asset ID accepted for payments (0 for native ALGO in microAlgos, or ASA ID).
+Asset ID accepted for payments (0 for native ALGO in microALGO, or ASA ID).
 </ParamField>
 
-<ParamField body="prices" type="Any" default="None">
+<ParamField body="prices" type="Prices | None" default="None">
 Tool pricing mapping or callable with signature `(tool, args, sender) -> int`.
 </ParamField>
 
@@ -72,8 +73,8 @@ Tool pricing mapping or callable with signature `(tool, args, sender) -> int`.
 Fallback price in base units for tools not explicitly listed in `prices`.
 </ParamField>
 
-<ParamField body="chain" type="Any" default="None">
-ChainReader instance for querying subscriptions, past usage, and passes.
+<ParamField body="chain" type="ChainLookup | None" default="None">
+`ChainReader` (or compatible object) for subscriptions, past usage, and passes.
 </ParamField>
 
 <ParamField body="subscription_asset_id" type="int | str | None" default="None">
@@ -101,7 +102,7 @@ Maximum number of entries maintained in memory.
 </ParamField>
 
 <ParamField body="min_fee_per_txn" type="int" default="1000">
-Network minimum transaction fee in microAlgos.
+Network minimum transaction fee in microALGO.
 </ParamField>
 
 <ParamField body="allow_loss" type="bool" default="False">
@@ -127,7 +128,7 @@ Validity window in days for vendor passes.
 
 ## Raises
 
-- `ValueError`: If `allow_loss=False`, `asset_id=0`, and any configured price is in the loss-making range `(0, 2 * min_fee_per_txn]`.
+- `ConfigurationError`: (a `ValueError`) If `allow_loss=False`, `asset_id=0`, and any configured price is in the loss-making range `(0, 2 * min_fee_per_txn]`; or if `subscription_issuer` is set but `chain.has_active_subscription` has no `issuer` parameter.
 
 ## Examples
 
@@ -152,7 +153,7 @@ Validity window in days for vendor passes.
 ```python
 def price_for(
     tool: str,
-    args: dict[str, Any] | None = None,
+    args: ToolArguments | None = None,
     sender: str | None = None,
 ) -> int
 ```
@@ -164,7 +165,7 @@ identity, argument contents, and cumulative usage volume.
 
 **Notes**
 
-Clamps positive ALGO prices to 2001 microAlgos (2 * minFee + 1) if `allow_loss=False`.
+Clamps positive ALGO prices to 2001 microALGO (2 * minFee + 1) if `allow_loss=False`.
 
 **Parameters**
 
@@ -172,7 +173,7 @@ Clamps positive ALGO prices to 2001 microAlgos (2 * minFee + 1) if `allow_loss=F
 Name of the MCP tool requested.
 </ParamField>
 
-<ParamField body="args" type="dict[str, Any] | None" default="None">
+<ParamField body="args" type="ToolArguments | None" default="None">
 Invocation argument mapping supplied to the tool.
 </ParamField>
 
@@ -183,7 +184,7 @@ Verified Algorand address of the caller.
 **Returns**
 
 <ResponseField name="returns" type="int">
-Effective price in base units (microAlgos for ALGO, base units for ASA).
+Effective price in base units (microALGO for ALGO, base units for ASA).
 Returns 0 if the call is free, covered by a pass, or covered by subscription.
 </ResponseField>
 
@@ -208,24 +209,39 @@ Returns 0 if the call is free, covered by a pass, or covered by subscription.
 def middleware() -> list[StarletteMiddleware]
 ```
 
-Generate Starlette middleware definitions for the ASGI application.
+Generate Starlette middleware definitions for an ASGI application.
+
+The middleware inspects the JSON-RPC body of every HTTP `POST` (any path,
+any transport) and gates each `tools/call`. Use it directly when you build
+the FastMCP HTTP app yourself, together with :class:`SettleOnSuccessMiddleware`
+(priced calls are refused with HTTP 500 until that middleware exists)::
+
+    mcp.add_middleware(SettleOnSuccessMiddleware(gate))
+    app = mcp.http_app(middleware=gate.middleware())
+
+:meth:`wrap` does both steps for you.
 
 **Returns**
 
 <ResponseField name="returns" type="list of StarletteMiddleware">
-Middleware stack handling `POST /messages` payment challenges and verifications.
+Middleware stack handling x402 payment challenges and verification.
 </ResponseField>
 
 ### `wrap`
 
 ```python
-def wrap(mcp: FastMCP) -> Any
+def wrap(
+    mcp: FastMCP,
+    transport: Transport | None = None,
+    path: str | None = None,
+    **http_app_kwargs: Any = {},
+) -> Any
 ```
 
 Wrap a FastMCP instance into an ASGI application protected by this PaymentGate.
 
-Configures SettleOnSuccessMiddleware, wraps server run loop for stateless SSE,
-and mounts HTTP middleware.
+Adds :class:`SettleOnSuccessMiddleware` to `mcp` and builds the FastMCP HTTP
+app with the gate's ASGI middleware.
 
 **Parameters**
 
@@ -233,17 +249,35 @@ and mounts HTTP middleware.
 FastMCP application instance defining MCP tools.
 </ParamField>
 
+<ParamField body="transport" type="Transport | None" default="None">
+HTTP transport to serve. `"streamable-http"` (alias `"http"`) serves the
+MCP Streamable HTTP transport at `/mcp`; `"sse"` serves the legacy SSE
+transport at `/sse` + `/messages/`. When omitted, SSE is used (the
+0.4 behaviour) and a `FutureWarning` is emitted: the default will change
+to `"streamable-http"` in a future release.
+</ParamField>
+
+<ParamField body="path" type="str | None" default="None">
+Endpoint path, passed to `FastMCP.http_app` (`/mcp` or `/sse` by default).
+</ParamField>
+
+<ParamField body="http_app_kwargs" type="Any" default="&#123;&#125;" />
+
 **Returns**
 
-<ResponseField name="returns" type="Any">
-ASGI application ready to serve with uvicorn or starlette.
+<ResponseField name="returns" type="starlette.applications.Starlette">
+ASGI application ready to serve with uvicorn.
 </ResponseField>
+
+**Raises**
+
+- `ConfigurationError`: If `transport` is not one of the supported values.
 
 **Example**
 
 ```python
-# Needs FastMCP instance:
-# app = gate.wrap(mcp)
+app = gate.wrap(mcp, transport="streamable-http")  # POST /mcp
+app = gate.wrap(mcp, transport="sse")  # GET /sse + POST /messages/
 ```
 
 ### `close`
@@ -274,4 +308,4 @@ Close resources used by this PaymentGate, including the replay store.
 - `AIEconomySDK`: High-level builder encapsulating PaymentGate.
 - `DefaultAvmSigner`: Default signing implementation.
 
-<sub>Source: [ai_economy_sdk/gate.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py#L142)</sub>
+<sub>Source: [ai_economy_sdk/gate.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py#L191)</sub>

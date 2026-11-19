@@ -31,6 +31,24 @@ The scheme identifier ("exact").
 The CAIP family pattern ("algorand:*").
 </ResponseField>
 
+## Examples
+
+```python
+import os
+
+from x402_algorand import ServerAvmSigner
+from x402_algorand.exact import ExactAvmFacilitatorScheme
+
+signer = ServerAvmSigner.from_mnemonic(
+    os.environ["FACILITATOR_MNEMONIC"], algod_url="http://localhost:4001", algod_token="a" * 64
+)
+scheme = ExactAvmFacilitatorScheme(signer)
+# Usually registered with register_exact_avm_facilitator(). Called directly:
+# result = scheme.verify(payload, requirements)   # VerifyResponse, never raises for a bad payment
+# if result.is_valid:
+#     settled = scheme.settle(payload, requirements)  # settled.transaction = buyer's payment txid
+```
+
 ## Methods
 
 ### `get_extra`
@@ -173,4 +191,4 @@ Payment requirements.
 SettleResponse with success, transaction, and payer.
 </ResponseField>
 
-<sub>Source: [x402_algorand/facilitator.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/facilitator.py#L60)</sub>
+<sub>Source: [x402_algorand/exact/facilitator.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/facilitator.py#L72)</sub>

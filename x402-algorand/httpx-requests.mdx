@@ -14,10 +14,14 @@ The official `x402` package wraps `httpx` and `requests` so that a `402` respons
 ## httpx (async)
 
 ```python
+import os
+
 from x402 import x402Client
 from x402.http.clients.httpx import wrapHttpxWithPayment
-from x402_algorand.exact.register import register_exact_avm_client
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import register_exact_avm_client
 
+buyer_signer = PayerAvmSigner.from_mnemonic(os.environ["PAYER_MNEMONIC"])
 x402_client = x402Client()
 register_exact_avm_client(x402_client, buyer_signer, algod_url="http://localhost:4001", algod_token="a" * 64)
 
@@ -33,134 +37,50 @@ The buyer pays the [FastAPI paywall](/x402-algorand/fastapi) on port 9211 and ch
 
 {/* example: localnet/httpx_client.py */}
 
-```python localnet/httpx_client.py expandable
-"""HTTPX client with automated x402 payment handling for Algorand LocalNet.
+```python localnet/httpx_client.py
+"""HTTPX client that pays x402 paywalls automatically on LocalNet.
 
-Connects to the protected GET http://127.0.0.1:9211/weather paywall server (or Flask on 9212).
-The client automatically:
-1. Sends the initial GET request, receiving HTTP 402 Payment Required.
-2. Parses the Payment-Required header containing requirements for 10,000 microALGO.
-3. Builds and signs the payment transaction (with zero fee, since the server is fee payer).
-4. Retries with the Payment-Signature header.
-5. Receives HTTP 200 with the protected resource body and the settlement receipt.
+Start fastapi_paywall.py (port 9211) or flask_paywall.py (9212) first, then:
 
-How to run:
-    # First ensure the server is running on port 9211 or 9212:
-    python localnet/fastapi_paywall.py &
-    # Then run the client:
     python localnet/httpx_client.py [--url http://127.0.0.1:9211/weather]
-
-What it prints:
-    Initial buyer balance, HTTP status 200, response body, final buyer balance,
-    and the exact balance drop (10,000 microALGO).
 """
 
 import argparse
 import asyncio
-import base64
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import httpx
-from algosdk import account, encoding, kmd, transaction
-from algosdk.v2client import algod
-
 from x402 import x402Client
 from x402.http.clients.httpx import wrapHttpxWithPayment
-from x402_algorand.exact.register import register_exact_avm_client
-from x402_algorand.utils import caip2_from_genesis_hash
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import register_exact_avm_client
 
-ALGOD_URL = "http://localhost:4001"
-ALGOD_TOKEN = "a" * 64
-algod_client = algod.AlgodClient(ALGOD_TOKEN, ALGOD_URL)
-
-sp = algod_client.suggested_params()
-network = caip2_from_genesis_hash(sp.gh)
+from _localnet import ALGOD, ALGOD_TOKEN, ALGOD_URL, new_funded_account
 
 
-# 1. LocalNet dispenser helper
-def dispenser():
-    k = kmd.KMDClient(ALGOD_TOKEN, "http://localhost:4002")
-    w = next(x for x in k.list_wallets() if x["name"] == "unencrypted-default-wallet")
-    h = k.init_wallet_handle(w["id"], "")
-    addr = max(k.list_keys(h), key=lambda a: algod_client.account_info(a)["amount"])
-    return addr, k.export_key(h, "", addr)
+async def main(url: str) -> None:
+    sk, addr = new_funded_account(5)
+    before = ALGOD.account_info(addr)["amount"]
 
-
-def new_funded_account(algos: int = 5):
-    sk, addr = account.generate_account()
-    d_addr, d_sk = dispenser()
-    txn = transaction.PaymentTxn(d_addr, algod_client.suggested_params(), addr, algos * 1_000_000)
-    algod_client.send_transaction(txn.sign(d_sk))
-    transaction.wait_for_confirmation(algod_client, txn.get_txid(), 10)
-    return sk, addr
-
-
-# 2. Client-side AVM signer implementation
-class ClientAvmSigner:
-    """Client-side AVM signer for creating signed payment transactions."""
-
-    def __init__(self, private_key: str):
-        self.private_key = private_key
-        self.address = account.address_from_private_key(private_key)
-
-    def sign_transactions(self, unsigned_txns: list[bytes], indexes: list[int]) -> list[bytes | None]:
-        signed = []
-        for i, txn_bytes in enumerate(unsigned_txns):
-            if i in indexes:
-                txn = encoding.msgpack_decode(base64.b64encode(txn_bytes).decode())
-                stx = base64.b64decode(encoding.msgpack_encode(txn.sign(self.private_key)))
-                signed.append(stx)
-            else:
-                signed.append(None)
-        return signed
-
-
-async def main(target_url: str = "http://127.0.0.1:9211/weather"):
-    # Fund buyer account
-    buyer_sk, buyer_addr = new_funded_account(5)
-    buyer_signer = ClientAvmSigner(buyer_sk)
-
-    bal_before = algod_client.account_info(buyer_addr)["amount"]
-    print(f"Buyer address: {buyer_addr}")
-    print(f"Buyer initial balance: {bal_before} microALGO")
-
-    # Set up official x402Client with Algorand scheme
-    client = x402Client()
-    client.set_spend_controls(False)  # Allow native ALGO asset 0 payments
+    client = x402Client()  # default spend controls allow ALGO up to 1,000,000 microALGO
     register_exact_avm_client(
-        client,
-        buyer_signer,
-        algod_url=ALGOD_URL,
-        algod_token=ALGOD_TOKEN,
+        client, PayerAvmSigner.from_private_key(sk), algod_url=ALGOD_URL, algod_token=ALGOD_TOKEN
     )
+    async with wrapHttpxWithPayment(client) as http:
+        response = await http.get(url, timeout=30.0)
+    print(response.status_code, response.json())
 
-    # Wrap httpx AsyncClient with automatic payment handling
-    async with wrapHttpxWithPayment(client) as paid_http:
-        print(f"Requesting GET {target_url}...")
-        response = await paid_http.get(target_url, timeout=30.0)
-
-        print(f"Response status: {response.status_code}")
-        print(f"Response body: {response.json()}")
-
-    # Verify balance change
-    bal_after = algod_client.account_info(buyer_addr)["amount"]
-    drop = bal_before - bal_after
-    print(f"Buyer final balance: {bal_after} microALGO")
-    print(f"Balance drop: {drop} microALGO")
-
-    assert response.status_code == 200, f"Expected 200, got {response.status_code}"
-    assert drop == 10000, f"Expected drop of 10000 microALGO, got {drop}"
-    print("Verification SUCCESS: Balance drop equals exactly 10,000 microALGO.")
+    spent = before - ALGOD.account_info(addr)["amount"]
+    assert response.status_code == 200 and spent == 10_000, (response.status_code, spent)
+    print(f"Paid exactly {spent} microALGO.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="x402 HTTPX client")
-    parser.add_argument("--url", default="http://127.0.0.1:9211/weather", help="Target endpoint URL")
-    args = parser.parse_args()
-    asyncio.run(main(args.url))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--url", default="http://127.0.0.1:9211/weather")
+    asyncio.run(main(parser.parse_args().url))
 ```
 
 <sub>Source: [examples/localnet/httpx_client.py](https://github.com/x402-avm/examples/blob/main/localnet/httpx_client.py)</sub>
@@ -172,26 +92,26 @@ python localnet/httpx_client.py
 ```
 
 ```text
-Buyer address: KZKKBAPRL273P4TE2RXWINUXLZE4I5WE5OXOYNFJ6HEV2E24ARA6GCESFY
-Buyer initial balance: 5000000 microALGO
-Requesting GET http://127.0.0.1:9211/weather...
-Response status: 200
-Response body: {'city': 'Boston', 'temperature': 68, 'conditions': 'sunny', 'network': 'algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY'}
-Buyer final balance: 4990000 microALGO
-Balance drop: 10000 microALGO
-Verification SUCCESS: Balance drop equals exactly 10,000 microALGO.
+200 {'city': 'Boston', 'temperature': 68, 'network': 'algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY'}
+Paid exactly 10000 microALGO.
 ```
+
+The network id is your LocalNet's and differs between machines.
 
 ## requests (sync)
 
 For synchronous code, use `x402ClientSync` and mount the payment adapter on a `requests.Session`:
 
 ```python
+import os
+
 import requests
 from x402 import x402ClientSync
 from x402.http.clients import wrapRequestsWithPayment
-from x402_algorand.exact.register import register_exact_avm_client
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import register_exact_avm_client
 
+buyer_signer = PayerAvmSigner.from_mnemonic(os.environ["PAYER_MNEMONIC"])
 x402_client = x402ClientSync()
 register_exact_avm_client(x402_client, buyer_signer, algod_url="http://localhost:4001", algod_token="a" * 64)
 

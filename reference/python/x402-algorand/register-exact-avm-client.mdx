@@ -58,4 +58,22 @@ Optional custom Algod token.
 Client for chaining.
 </ResponseField>
 
-<sub>Source: [x402_algorand/register.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/register.py#L28)</sub>
+## Examples
+
+```python
+import os
+
+from x402 import x402Client
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import register_exact_avm_client
+
+client = x402Client()
+register_exact_avm_client(
+    client,
+    PayerAvmSigner.from_mnemonic(os.environ["PAYER_MNEMONIC"]),
+    algod_url="http://localhost:4001",  # LocalNet; omit on MainNet / TestNet
+    algod_token="a" * 64,
+)
+```
+
+<sub>Source: [x402_algorand/exact/register.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/register.py#L28)</sub>

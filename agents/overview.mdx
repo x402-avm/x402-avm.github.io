@@ -45,9 +45,10 @@ What makes this workable for unattended agents:
 
 | Fact | Value |
 |---|---|
-| Python client | `from ai_economy_sdk import paid_mcp_session` |
-| Default spend cap | `$1` per payment: 1,000,000 base units of ALGO or USDC |
-| Default allowed assets | ALGO (`"0"`) on any Algorand network; USDC `"31566704"` (MainNet), `"10458941"` (TestNet) |
+| Python client | `from ai_economy_sdk import paid_mcp_session` (URL ending in `/mcp`: Streamable HTTP) |
+| JavaScript client | `payForRequirement(required, address, algod, signTxns, { maxAmount })` from `x402-avm-js` |
+| Default spend cap | `$1` per payment: 1,000,000 base units of ALGO or USDC (Python `x402` client); 1,000,000 base units of any asset (`x402-avm-js` 0.4.0) |
+| Default allowed assets (Python) | ALGO (`"0"`) on any Algorand network; USDC `"31566704"` (MainNet), `"10458941"` (TestNet). x402-avm-js allows any asset unless `allowedAssets` is set |
 | Challenge header (server to client) | `PAYMENT-REQUIRED` (base64 JSON, x402 version 2) |
 | Payment header (client to server) | `PAYMENT-SIGNATURE` (base64 JSON) |
 | Identity headers | `X-Identity-Txn`, or `x-sender-address` / `x-sender-timestamp` / `x-sender-signature` |

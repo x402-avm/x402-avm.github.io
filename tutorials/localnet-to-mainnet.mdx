@@ -23,9 +23,9 @@ Moving a paid service from development to production changes the network id, the
 
 This module builds one configuration object from `NETWORK` (`localnet`, `testnet` or `mainnet`): endpoints, network id, asset and its decimals. It uses ALGO on LocalNet and USDC on TestNet and MainNet.
 
-{/* example: mainnet/config.py */}
+{/* example: shared/config.py */}
 
-```python mainnet/config.py expandable
+```python shared/config.py expandable
 """Multi-network configuration manager for Algorand payments.
 
 Switches configuration between LocalNet, TestNet, and MainNet using the
@@ -33,12 +33,12 @@ NETWORK environment variable. Selects ALGO for LocalNet development and
 USDC for TestNet and MainNet.
 
 Usage:
-    NETWORK=localnet python mainnet/config.py
-    NETWORK=testnet python mainnet/config.py
-    NETWORK=mainnet python mainnet/config.py
+    NETWORK=localnet python shared/config.py
+    NETWORK=testnet python shared/config.py
+    NETWORK=mainnet python shared/config.py
 
 Dry run:
-    python mainnet/config.py --dry-run
+    python shared/config.py --dry-run
 """
 
 from __future__ import annotations
@@ -216,7 +216,7 @@ if __name__ == "__main__":
         dry_run()
 ```
 
-<sub>Source: [examples/mainnet/config.py](https://github.com/x402-avm/examples/blob/main/mainnet/config.py)</sub>
+<sub>Source: [examples/shared/config.py](https://github.com/x402-avm/examples/blob/main/shared/config.py)</sub>
 
 {/* /example */}
 
@@ -225,7 +225,7 @@ if __name__ == "__main__":
 The module prints the configuration for all three networks without connecting to a funded account or sending a transaction (it reads LocalNet's genesis hash from its algod):
 
 ```bash
-python mainnet/config.py --dry-run
+python shared/config.py --dry-run
 ```
 
 ```text
@@ -283,7 +283,7 @@ python mainnet/config.py --dry-run
     export FEE_PAYER_MNEMONIC="..."   # injected by your secret manager, not typed into a shell history
     ```
 
-    `mainnet/config.py` reads `NETWORK`, `ALGOD_URL`, `ALGOD_TOKEN`, `INDEXER_URL` and `INDEXER_TOKEN`. `VENDOR_ADDRESS` and `FEE_PAYER_MNEMONIC` are for your own server code, as in the [MainNet guide](/guides/networks/mainnet#server-configuration).
+    `shared/config.py` reads `NETWORK`, `ALGOD_URL`, `ALGOD_TOKEN`, `INDEXER_URL` and `INDEXER_TOKEN`. `VENDOR_ADDRESS` and `FEE_PAYER_MNEMONIC` are for your own server code, as in the [MainNet guide](/guides/networks/mainnet#server-configuration).
   </Step>
   <Step title="Monitor">
     Alert when the fee payer balance falls below a threshold such as 5 ALGO, and top it up from a treasury account.

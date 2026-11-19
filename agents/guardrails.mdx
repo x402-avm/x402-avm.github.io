@@ -76,23 +76,35 @@ A per-asset cap must be an integer string in base units; a dollar value raises `
 
 ## JavaScript clients
 
-`x402-avm-js` signs whatever offer `payForRequirement` selects for the wallet's network; it has no spend controls. Check the offer yourself before signing:
+Since 0.4.0, `x402-avm-js` checks every offer against spend controls before it builds or signs anything. The server chooses the amount in a `402`, so this is what stops a compromised or buggy server from asking your wallet for more than you intended.
+
+**Default:** any payment above 1,000,000 base units (1 ALGO, or 1 USDC) is refused with `SpendLimitExceededError`. Pass the options argument of `payForRequirement` (or `buildExactAvmGroup`) to tighten or raise it:
 
 ```ts
-import { decodePaymentRequired, payForRequirement, selectRequirement, MAINNET } from 'x402-avm-js';
+import { payForRequirement, SpendLimitExceededError, PaymentNotAllowedError } from 'x402-avm-js';
 
-const MAX_AMOUNT = 50_000n;                   // base units
-const ALLOWED_ASSETS = new Set(['0', String(MAINNET.usdc)]);
-
-const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
-const offer = selectRequirement(required, 'mainnet');
-if (!ALLOWED_ASSETS.has(offer.asset) || BigInt(offer.amount) > MAX_AMOUNT) {
-  throw new Error(`refusing to pay ${offer.amount} of asset ${offer.asset}`);
+try {
+  const header = await payForRequirement(required, address, algod, signTxns, {
+    maxAmount: 50_000n,                     // base units; bigint, safe integer or numeric string
+    allowedAssets: [0, 31566704],           // ALGO and MainNet USDC
+    allowedNetworks: ['mainnet'],           // names or CAIP-2 ids
+    allowedPayTo: [TRUSTED_VENDOR_ADDRESS], // recipients you trust
+  });
+} catch (e) {
+  if (e instanceof SpendLimitExceededError) console.warn(`asked for ${e.amount}, limit ${e.limit}`);
+  else if (e instanceof PaymentNotAllowedError) console.warn(`${e.field} ${e.value} not allowed`);
+  else throw e;
 }
-const header = await payForRequirement(required, address, algod, signTxns);
 ```
 
-`payForRequirement` selects the offer the same way (`selectRequirement` for the algod's network), so the checked offer is the one that gets paid when `algod` is on MainNet.
+| Option | Meaning |
+|---|---|
+| `maxAmount` | Per-payment cap in base units. One value applies to every asset; a record such as `{ '0': 2_000_000, '31566704': 5_000_000, '*': 100_000 }` sets it per asset id, with `'*'` as fallback. Assets not covered use the 1,000,000 default. `Infinity` removes the cap. |
+| `allowedAssets` | If set, only these asset ids (`0` is ALGO). |
+| `allowedNetworks` | If set, only these networks. LocalNet has no name here: use its CAIP-2 id from `networkFromAlgod(algod)`. |
+| `allowedPayTo` | If set, only these recipient addresses. |
+
+`checkSpendControls(requirement, controls)` runs the same check on its own, for example to show the user a price before asking the wallet to sign. A malformed option throws `InvalidOptionsError`.
 
 ## Server-side protections that help agents
 

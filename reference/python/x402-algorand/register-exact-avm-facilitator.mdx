@@ -43,4 +43,22 @@ Network(s) to register.
 Facilitator for chaining.
 </ResponseField>
 
-<sub>Source: [x402_algorand/register.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/register.py#L108)</sub>
+## Examples
+
+```python
+import os
+
+from algosdk.v2client.algod import AlgodClient
+from x402 import x402Facilitator
+from x402_algorand import ServerAvmSigner, caip2_from_genesis_hash
+from x402_algorand.exact import register_exact_avm_facilitator
+
+algod = AlgodClient("a" * 64, "http://localhost:4001")  # LocalNet
+network = caip2_from_genesis_hash(algod.suggested_params().gh)
+signer = ServerAvmSigner.from_mnemonic(os.environ["FACILITATOR_MNEMONIC"], algod)
+
+facilitator = x402Facilitator()
+register_exact_avm_facilitator(facilitator, signer, network)
+```
+
+<sub>Source: [x402_algorand/exact/register.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/register.py#L108)</sub>

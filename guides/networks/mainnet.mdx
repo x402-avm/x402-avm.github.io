@@ -57,9 +57,12 @@ On MainNet, payments move real ALGO and USDC. This page lists what changes from 
 ```python server_mainnet.py
 import os
 
-from algosdk import account, mnemonic
+from algosdk import mnemonic
 from algosdk.v2client import algod
+from fastmcp import FastMCP
 from ai_economy_sdk import MAINNET, DefaultAvmSigner, PaymentGate, usdc_asset_id
+
+mcp = FastMCP("AnalysisService")  # your tools: @mcp.tool() ...
 
 algod_client = algod.AlgodClient(
     os.environ.get("ALGOD_TOKEN", ""),
@@ -75,10 +78,10 @@ gate = PaymentGate(
     prices={"analyze": 100_000},         # 0.10 USDC
     replay_db="/var/lib/my-service/replay.db",
 )
-app = gate.wrap(mcp)
+app = gate.wrap(mcp, transport="streamable-http")  # MCP endpoint: POST /mcp
 ```
 
-Run it with several workers, for example `uvicorn server_mainnet:app --workers 4`. Turn on logging for settlement outcomes and fee warnings with `logging.getLogger("ai_economy_sdk").setLevel(logging.INFO)`.
+Run it with several workers, for example `uvicorn server_mainnet:app --workers 4`. Refused calls, settlement failures and failed chain lookups are logged at `WARNING` to the `ai_economy_sdk` logger; attach a handler (for example `logging.basicConfig(level=logging.WARNING)`) and alert on them.
 
 ## Simulate on MainNet
 
@@ -255,9 +258,13 @@ node mainnet/simulate.mjs
     import algosdk from 'algosdk';
     import {
       MAINNET,
+      X402AvmError,
       algodClient,
       payForRequirement,
     } from 'x402-avm-js';
+
+    // Refuse anything above 10,000 base units (the default cap is 1,000,000).
+    const SPEND_CONTROLS = { maxAmount: 10_000n };
 
     async function fundedUsdcHolders(net, algod) {
       const url = `${net.indexerUrl}/v2/assets/${net.usdc}/balances?currency-greater-than=5000000&limit=40`;
@@ -314,7 +321,7 @@ node mainnet/simulate.mjs
           accepts: [requirement],
         };
 
-        const paymentSignatureHeader = await payForRequirement(challenge, payer, algod, emptySigner);
+        const paymentSignatureHeader = await payForRequirement(challenge, payer, algod, emptySigner, SPEND_CONTROLS);
         const decoded = JSON.parse(new TextDecoder().decode(algosdk.base64ToBytes(paymentSignatureHeader)));
 
         const txns = decoded.payload.paymentGroup.map(
@@ -345,7 +352,8 @@ node mainnet/simulate.mjs
     }
 
     main().catch((err) => {
-      console.error('MainNet simulation failed:', err);
+      // x402-avm-js errors carry a stable `code`, e.g. SPEND_LIMIT_EXCEEDED.
+      console.error('MainNet simulation failed:', err instanceof X402AvmError ? `${err.code}: ${err.message}` : err);
       process.exit(1);
     });
     ```
@@ -374,7 +382,7 @@ async with paid_mcp_session(server_url, buyer_sk, "mainnet") as session:
 | Signal | How |
 |---|---|
 | Fee payer balance | `algod_client.account_info(fee_payer)["amount"]` on a schedule |
-| Settlement failures | `ToolError("payment settlement failed: ...")` in server logs |
+| Settlement failures | `SettlementError("payment settlement failed: ...")` returned to callers; WARNING records on the `ai_economy_sdk` logger |
 | Replay rejections | `402` responses with `{"error": "Replay detected"}` |
 | Revenue | Payments to `pay_to` on the indexer, or `ChainReader.past_usage` per buyer |
 

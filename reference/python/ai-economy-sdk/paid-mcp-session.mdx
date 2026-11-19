@@ -19,16 +19,17 @@ async def paid_mcp_session(
     algod_token: str | None = None,
     identity: bool = True,
     timeout: float = 30.0,
-    spend_controls: dict | Literal[False] | None = None,
+    spend_controls: SpendControlsArg = None,
+    transport: ClientTransport | None = None,
 ) -> AsyncGenerator[ClientSession, None]
 ```
 
 Open an MCP session that pays for tool calls with x402 on Algorand.
 
-Connects to a remote SSE-based Model Context Protocol server, initializing
-a ClientSession configured with an x402-aware HTTP client. Outgoing requests
-automatically carry identity headers (if enabled) and auto-sign 402 payment
-challenges for exact Algorand scheme payments.
+Connects to a remote Model Context Protocol server over Streamable HTTP or the
+legacy SSE transport, initializing a ClientSession configured with an x402-aware
+HTTP client. Outgoing requests automatically carry identity headers (if enabled)
+and auto-sign 402 payment challenges for exact Algorand scheme payments.
 
 **Notes**
 
@@ -40,7 +41,9 @@ Funds are only deducted from the buyer's account if the tool execution succeeds.
 ## Parameters
 
 <ParamField body="sse_url" type="str" required>
-URL of the SSE endpoint on the MCP server (e.g. `"http://localhost:8000/sse"`).
+URL of the server's MCP endpoint: `"http://localhost:8000/mcp"` for Streamable
+HTTP or `"http://localhost:8000/sse"` for SSE. (The parameter keeps its 0.4
+name for compatibility; it accepts either kind of URL.)
 </ParamField>
 
 <ParamField body="private_key" type="str" required>
@@ -72,7 +75,7 @@ HTTP request timeout in seconds for normal requests. Stream reads allow up
 to 300 seconds.
 </ParamField>
 
-<ParamField body="spend_controls" type="dict | Literal[False] | None" default="None">
+<ParamField body="spend_controls" type="SpendControlsArg" default="None">
 Client-side spending limits enforced by x402Client before payment authorization:
 - None (default): official x402 defaults apply — only default assets (native ALGO
   and USDC) are allowed, capped at 1,000,000 base atomic units (1 ALGO / 1 USDC) per payment.
@@ -84,12 +87,21 @@ Client-side spending limits enforced by x402Client before payment authorization:
   whitelists a specific ASA.
 </ParamField>
 
+<ParamField body="transport" type="ClientTransport | None" default="None">
+MCP transport to use. When omitted, Streamable HTTP is used if the URL path ends
+in `/mcp` and SSE otherwise, which keeps 0.4 behaviour for SSE URLs.
+</ParamField>
+
 ## Yields
 
 <ResponseField name="yields" type="mcp.ClientSession">
 Active, initialized MCP client session capable of invoking tools via
 `session.call_tool(tool_name, arguments)`.
 </ResponseField>
+
+## Raises
+
+- `ConfigurationError`: If `transport` is not `"streamable-http"` or `"sse"`.
 
 ## Examples
 
@@ -100,7 +112,7 @@ from ai_economy_sdk import paid_mcp_session
 
 async def run():
     async with paid_mcp_session(
-        sse_url="http://localhost:8000/sse",
+        "http://localhost:8000/mcp",
         private_key=buyer_pk,
         network="localnet",
     ) as session:
@@ -115,4 +127,4 @@ asyncio.run(run())
 - `PaymentGate`: Server-side payment middleware.
 - `AIEconomySDK`: High-level server framework.
 
-<sub>Source: [ai_economy_sdk/client.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/client.py#L24)</sub>
+<sub>Source: [ai_economy_sdk/client.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/client.py#L40)</sub>

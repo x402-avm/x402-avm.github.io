@@ -30,12 +30,13 @@ An Algorand account must opt in to an ASA before it can receive it. Both the ven
 
 ```python
 from algosdk.transaction import AssetTransferTxn, wait_for_confirmation
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
 from algosdk.v2client import algod
 
 def opt_in_usdc(client: algod.AlgodClient, address: str, private_key: str, usdc_asset_id: int) -> None:
     params = client.suggested_params()
     txn = AssetTransferTxn(sender=address, sp=params, receiver=address, amt=0, index=usdc_asset_id)
-    txid = client.send_transaction(txn.sign(private_key))
+    txid = client.send_transaction(AccountTransactionSigner(private_key).sign_transactions([txn], [0])[0])
     wait_for_confirmation(client, txid, 4)
 ```
 

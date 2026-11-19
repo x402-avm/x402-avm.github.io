@@ -44,7 +44,7 @@ A LocalNet gets a new genesis hash every time it is reset, so its id cannot be h
 
 These names are understood by `ai-economy-sdk` and `x402-avm-js`. The lower-level `x402-algorand` functions, such as `normalize_network`, take CAIP-2 ids and the x402 v1 names (`algorand-mainnet`, `algorand-testnet`, `algorand`), not `"mainnet"` or `"localnet"`.
 
-In JavaScript, `resolveNetwork("localnet")` throws because the id must be read from a node; use `networkFromAlgod(algodClient("localnet"))`.
+In JavaScript, `resolveNetwork("localnet")` throws because the id must be read from a node; use `networkFromAlgod(algod)` with an `Algodv2` client for the LocalNet node.
 
 ## Resolve networks in code
 
@@ -64,14 +64,15 @@ resolve_network("localnet", local)  # 'algorand:<32 characters>'
 ```
 
 ```ts JavaScript
-import { algodClient, networkFromAlgod, networkFromGenesisHash, resolveNetwork, MAINNET } from 'x402-avm-js';
+import algosdk from 'algosdk';
+import { LOCALNET_ENDPOINTS, networkFromAlgod, networkFromGenesisHash, resolveNetwork, MAINNET } from 'x402-avm-js';
 
 resolveNetwork('testnet');  // 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'
 networkFromGenesisHash(MAINNET.genesisHash);  // 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
 MAINNET.usdc;  // 31566704
 
 // LocalNet: ask its algod
-const id = await networkFromAlgod(algodClient('localnet'));
+const id = await networkFromAlgod(new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl));
 ```
 </CodeGroup>
 

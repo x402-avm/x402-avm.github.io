@@ -1,6 +1,6 @@
 ---
-title: "Error codes"
-description: "Every verification and settlement failure reason of the Algorand exact scheme, and the errors raised by ai-economy-sdk and the x402 client."
+title: "Errors and error codes"
+description: "Every verification and settlement failure reason of the Algorand exact scheme, and the exception classes of ai-economy-sdk, x402-algorand and x402-avm-js."
 ---
 
 ## Facilitator error codes
@@ -36,23 +36,75 @@ When `ExactAvmFacilitatorScheme.verify()` rejects a payment, it returns `VerifyR
 | `transaction_simulation_failed` | `ERR_SIMULATION_FAILED` | algod's simulation rejected the group: insufficient balance, an account below its minimum balance, a missing ASA opt-in, expired rounds. The node's message is in `invalid_message`. | Fund or opt in the account named in the message; rebuild with fresh parameters. |
 | `transaction_failed` | `ERR_TRANSACTION_FAILED` | Settlement: submitting or confirming the group failed. | Check algod, the fee payer's balance and the validity rounds; the buyer can pay again. |
 
-Three constants are defined for compatibility but not returned by the 0.2.x facilitator: `invalid_exact_avm_payload` (`ERR_INVALID_PAYLOAD`), `invalid_exact_avm_payload_transaction_decode_failed` (`ERR_TXN_DECODE_FAILED`) and `invalid_exact_avm_payload_transaction_type` (`ERR_INVALID_TXN_TYPE`). A wrong transaction type is reported as `invalid_exact_avm_payload_asset_id_mismatch`.
+Three constants are defined for compatibility but not returned by the facilitator: `invalid_exact_avm_payload` (`ERR_INVALID_PAYLOAD`), `invalid_exact_avm_payload_transaction_decode_failed` (`ERR_TXN_DECODE_FAILED`) and `invalid_exact_avm_payload_transaction_type` (`ERR_INVALID_TXN_TYPE`). A wrong transaction type is reported as `invalid_exact_avm_payload_asset_id_mismatch`.
 
-## ai-economy-sdk errors
+## ai-economy-sdk exceptions
+
+Since 0.5.0, every exception `ai-economy-sdk` raises on purpose derives from `AIEconomyError` (in `ai_economy_sdk.exceptions`, also exported from `ai_economy_sdk`). Each class also derives from the type raised at the same place in 0.4.x, so existing handlers keep working.
+
+```text
+AIEconomyError
+├── ConfigurationError (ValueError)
+│   ├── UnknownNetworkError
+│   └── AlgodClientRequiredError (also RuntimeError)
+├── PaymentVerificationError (RuntimeError)
+├── PaymentRequiredError (fastmcp ToolError)
+└── SettlementError (fastmcp ToolError)
+```
+
+| Exception | Also a | Raised when |
+|---|---|---|
+| `ConfigurationError` | `ValueError` | Invalid arguments, detected before any payment: a fixed ALGO price in `(0, 2000]` without `allow_loss=True` ([the fee floor](/ai-economy-sdk/pricing#the-fee-floor)); an unsupported `transport=` in `wrap()` or `paid_mcp_session`; a `pricing_func` that is not callable or accepts neither `(args, sender)` nor `(args)`; `subscription_issuer` set with a `chain` whose `has_active_subscription()` has no `issuer` parameter. |
+| `UnknownNetworkError` | `ConfigurationError` | A network name or CAIP-2 id cannot be resolved, for example `register_network()` with a 32-character id of an unknown network (pass the full genesis hash or use `network_from_algod`). |
+| `AlgodClientRequiredError` | `ConfigurationError`, `RuntimeError` | `DefaultAvmSigner` was created without `algod_client` and is asked to simulate, send or confirm. |
+| `PaymentVerificationError` | `RuntimeError` | `DefaultAvmSigner` simulated a payment group and algod reported a failure. |
+| `PaymentRequiredError` | FastMCP `ToolError` | A priced tool call reached the FastMCP server without passing through the gate (for example over a transport the gate does not wrap), or its payment reservation expired. The call is refused, not served unpaid. |
+| `SettlementError` | FastMCP `ToolError` | The tool succeeded but the payment could not be settled. The tool output is withheld and the reservation released, so the buyer is not charged. |
+
+Other responses from a gated server:
+
+| What the caller sees | Cause |
+|---|---|
+| `402` with `{"error": "Replay detected"}` | The same signed payment was presented again while its first use is still reserved. A payment that was already settled fails verification first: resending it returns `402` with `{"error": "transaction_simulation_failed"}`. |
+| HTTP `400`, JSON-RPC error `batched tools/call requests are not supported` | A JSON-RPC batch contains a `tools/call`. |
+| HTTP `500`, JSON-RPC error `payment gate misconfigured` | A priced call arrived but `SettleOnSuccessMiddleware` was never installed (the app was built without `wrap()` and without `mcp.add_middleware(SettleOnSuccessMiddleware(gate))`). |
+| MCP result with `isError=True` | The tool itself failed; the payment was discarded and nothing was submitted. |
+
+Refusals, settlement failures, expired reservations and failed chain lookups are logged at `WARNING` to the `ai_economy_sdk` logger.
+
+## x402-algorand exceptions
+
+Since 0.3.0, the exceptions `x402-algorand` raises derive from `X402AlgorandError` (in `x402_algorand.errors`, also exported from `x402_algorand`). Each also derives from the built-in type raised before 0.3.0.
+
+| Exception | Also a | Raised when |
+|---|---|---|
+| `NetworkError` | `ValueError` | A network id is malformed, unsupported or not registered, for example a client scheme asked to pay on a network with no configured algod and no `algod_url`. |
+| `NetworkMismatchError` | `NetworkError` | algod is on a different network than requested: the client's algod differs from the requirement's network (`algod is on <id> but the payment is for <id>`), or a `ServerAvmSigner`'s algod differs from the network it is used for. |
+| `TransactionDecodeError` | `ValueError` | Bytes or base64 text are not a decodable Algorand transaction (`decode_transaction_bytes`, `decode_base64_transaction`). |
+| `SigningError` | `ValueError` | `PayerAvmSigner` / `ServerAvmSigner` got a malformed key or mnemonic, or was asked to sign for an address it does not manage. |
+| `SimulationError` | `RuntimeError` | `ServerAvmSigner.simulate_group` was told by algod that the group would fail. |
+
+An invalid payment never raises: `verify()` and `settle()` return a response with one of the [facilitator error codes](#facilitator-error-codes) above. The package logs to the `x402_algorand` logger.
+
+## x402 client errors (Python)
 
 | Where | Error | Cause |
 |---|---|---|
-| `PaymentGate(...)` | `ValueError: price <n> for tool '<tool>' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True` | A fixed ALGO price in `(0, 2000]`. See [the fee floor](/ai-economy-sdk/pricing#the-fee-floor). |
-| Tool call | `402` with `{"error": "Replay detected"}` | The same signed payment was presented again. |
-| Tool call | `ToolError: payment settlement failed: <reason>` | The tool succeeded but the payment could not be settled; the buyer was not charged and gets no result. |
-| Tool call | MCP result with `isError=True` | The tool failed; the payment was discarded. |
-| `register_network(...)` | `ValueError: pass the genesis hash or use network_from_algod` | A 32-character id of an unknown network; registration needs the full genesis hash. |
+| `x402Client.create_payment_payload` | `NoMatchingRequirementsError` | No offer passes the spend controls and policies, or none is for a registered network. |
+| `wrapHttpxWithPayment` / `x402HttpxClient`, and so `paid_mcp_session` | `x402.http.clients.httpx.PaymentError` (`Failed to handle payment: ...`), caused by the `NoMatchingRequirementsError` | The same refusal, raised by the HTTP client. In an MCP session it reaches your code inside an `ExceptionGroup`. |
 
-## Client errors
+## x402-avm-js errors
 
-| Where | Error | Cause |
+Since 0.4.0, every error extends `X402AvmError` and carries a stable `code` string; `name` is the class name.
+
+| Class | `code` | Thrown when |
 |---|---|---|
-| `x402Client` / `paid_mcp_session` | `NoMatchingRequirementsError` | No offer passes the spend controls and policies, or none is for a registered network. |
-| `ExactAvmClientScheme.create_payment_payload` | `ValueError: algod is on <id> but the payment is for <id>` | The client's algod is on another network than the offer. |
-| `x402-avm-js` `selectRequirement` / `payForRequirement` | `Error: The server asks for payment on <ids>, but this wallet is on <id>` | No `exact` offer for the algod's network. |
-| `x402-avm-js` `resolveNetwork` | `Error: Unknown network "<name>"` | Not an alias or CAIP-2 id; for LocalNet use `networkFromAlgod`. |
+| `SpendLimitExceededError` | `spend_limit_exceeded` | The amount is above the cap (1,000,000 base units by default). Properties `asset`, `amount`, `limit`. Thrown before anything is signed. |
+| `PaymentNotAllowedError` | `payment_not_allowed` | The asset, network or recipient is not on an allow list. Properties `field` (`asset`, `network` or `payTo`) and `value`. |
+| `InvalidPaymentRequiredError` | `invalid_payment_required` | The `PAYMENT-REQUIRED` header or a requirement is malformed (`decodePaymentRequired`, `parsePaymentRequired`, `buildExactAvmGroup`). |
+| `NoSupportedRequirementError` | `no_supported_requirement` | The challenge has no `accepts` entries. |
+| `NetworkMismatchError` | `network_mismatch` | No offer is for the wallet's network, or a requirement's `extra.genesisHash` / `extra.genesisId` differs from algod's. Properties `offered`, `expected`. |
+| `UnknownNetworkError` | `unknown_network` | A network name or CAIP-2 id is not recognised (`resolveNetwork`, `algodClient` without a URL). For LocalNet use `networkFromAlgod`. |
+| `InvalidOptionsError` | `invalid_options` | A spend control is malformed, for example a negative `maxAmount`. |
+
+Errors raised by algod or by your `signTxns` callback propagate unchanged.

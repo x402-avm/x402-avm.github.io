@@ -30,4 +30,18 @@ characters of the URL-safe base64 encoding of the raw 32-byte genesis hash.
 CAIP-2 network identifier (e.g. "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k").
 </ResponseField>
 
-<sub>Source: [x402_algorand/utils.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py#L64)</sub>
+## Raises
+
+- `TypeError`: If `genesis_hash` is neither `str` nor `bytes`.
+- `NetworkError`: If `genesis_hash` is not valid base64.
+
+## Examples
+
+```python
+from x402_algorand import caip2_from_genesis_hash
+
+print(caip2_from_genesis_hash("wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="))
+# algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k
+```
+
+<sub>Source: [x402_algorand/utils.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py#L78)</sub>

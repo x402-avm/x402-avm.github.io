@@ -20,7 +20,7 @@ algokit localnet stop     # stop the containers
 | indexer | `http://localhost:8980` | none |
 | KMD | `http://localhost:4002` | 64 × `a` |
 
-The SDKs use these endpoints by default when you pass `network="localnet"`. In Python you can move them with `ALGOD_LOCALNET_URL` and `INDEXER_LOCALNET_URL`. In JavaScript, `LOCALNET_ENDPOINTS` holds the defaults and `algodClient("localnet")` returns a client for them.
+The SDKs use these endpoints by default when you pass `network="localnet"`. In Python you can move them with `ALGOD_LOCALNET_URL` and `INDEXER_LOCALNET_URL`. In JavaScript, `LOCALNET_ENDPOINTS` holds the defaults; create the client with `new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl)` (in x402-avm-js 0.4.0, `algodClient("localnet")` connects to port 80; see [Networks](/x402-avm-js/networks#localnet)).
 
 ## The LocalNet network id
 
@@ -36,9 +36,11 @@ print(resolve_network("localnet", local))  # algorand:<32 characters>
 ```
 
 ```ts JavaScript
-import { algodClient, networkFromAlgod } from 'x402-avm-js';
+import algosdk from 'algosdk';
+import { LOCALNET_ENDPOINTS, networkFromAlgod } from 'x402-avm-js';
 
-console.log(await networkFromAlgod(algodClient('localnet')));
+const algod = new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl);
+console.log(await networkFromAlgod(algod));
 ```
 </CodeGroup>
 
@@ -57,6 +59,7 @@ LocalNet's KMD holds a funded wallet named `unencrypted-default-wallet`. The exa
 ```python localnet/_localnet.py
 """LocalNet helper for doc examples: funds test accounts using LocalNet's KMD dispenser."""
 from algosdk import account, kmd, transaction
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
 from algosdk.v2client import algod
 
 ALGOD_URL = "http://localhost:4001"
@@ -83,7 +86,7 @@ def new_funded_account(algos: int = 10) -> tuple[str, str]:
     d_addr, d_sk = dispenser()
     sp = ALGOD.suggested_params()
     txn = transaction.PaymentTxn(d_addr, sp, addr, algos * 1_000_000)
-    ALGOD.send_transaction(txn.sign(d_sk))
+    ALGOD.send_transaction(AccountTransactionSigner(d_sk).sign_transactions([txn], [0])[0])
     transaction.wait_for_confirmation(ALGOD, txn.get_txid(), 10)
     return sk, addr
 ```

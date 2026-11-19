@@ -3,13 +3,13 @@ title: "Client"
 description: "Call paid MCP tools from Python with paid_mcp_session, which answers 402 challenges within spend limits."
 ---
 
-`paid_mcp_session` opens an MCP session over SSE whose HTTP client pays x402 challenges automatically. When a tool call returns `402`, the session builds the Algorand payment, signs the buyer's transaction, and retries the call. Your code only sees the tool result.
+`paid_mcp_session` opens an MCP session (over Streamable HTTP or the legacy SSE transport) whose HTTP client pays x402 challenges automatically. When a tool call returns `402`, the session builds the Algorand payment, signs the buyer's transaction, and retries the call. Your code only sees the tool result.
 
 ## Prerequisites
 
 - Python 3.10 or newer, with `ai-economy-sdk` installed.
 - A funded Algorand account on the server's network (its base64 private key).
-- The SSE URL of a paid MCP server, for example `http://127.0.0.1:9201/sse`.
+- The MCP endpoint URL of a paid MCP server, for example `http://127.0.0.1:9201/mcp`.
 
 ## Open a paid session
 
@@ -18,7 +18,7 @@ import asyncio
 from ai_economy_sdk import paid_mcp_session
 
 async def main() -> None:
-    async with paid_mcp_session("http://127.0.0.1:9201/sse", buyer_private_key, "localnet") as session:
+    async with paid_mcp_session("http://127.0.0.1:9201/mcp", buyer_private_key, "localnet") as session:
         tools = await session.list_tools()
         print("Tools:", [t.name for t in tools.tools])
 
@@ -34,7 +34,7 @@ The yielded object is an initialized `mcp.ClientSession`, so every MCP client me
 
 | Parameter | Default | Description |
 |---|---|---|
-| `sse_url` | required | The server's `/sse` endpoint. |
+| `sse_url` | required | The server's MCP endpoint: `.../mcp` for Streamable HTTP or `.../sse` for SSE. The parameter keeps its 0.4 name; it accepts either kind of URL. |
 | `private_key` | required | Base64 Algorand private key of the buyer, as returned by `algosdk.account.generate_account()` or `algosdk.mnemonic.to_private_key()`. |
 | `network` | required | `"mainnet"`, `"testnet"`, `"localnet"`, or a CAIP-2 id. |
 | `algod_url` | `None` | algod endpoint. Defaults to AlgoNode for MainNet and TestNet, `http://localhost:4001` for LocalNet. |
@@ -42,6 +42,7 @@ The yielded object is an initialized `mcp.ClientSession`, so every MCP client me
 | `identity` | `True` | Attach identity headers to every request, so the server knows the caller's address for passes, subscriptions and per-caller prices. |
 | `timeout` | `30.0` | HTTP timeout in seconds. Stream reads allow up to 300 seconds. |
 | `spend_controls` | `None` | Client-side spending limits; see below. |
+| `transport` | `None` | Keyword-only: `"streamable-http"` or `"sse"`. When omitted, URLs whose path ends in `/mcp` use Streamable HTTP and all others use SSE. Any other value raises `ConfigurationError`. |
 
 Full reference: [`paid_mcp_session`](/reference/python/ai-economy-sdk/paid-mcp-session).
 
@@ -49,9 +50,13 @@ Full reference: [`paid_mcp_session`](/reference/python/ai-economy-sdk/paid-mcp-s
   With `identity=True` the session sends the legacy identity headers `x-sender-address`, `x-sender-timestamp` and `x-sender-signature`, signed by the buyer key. `PaymentGate` accepts these and the `X-Identity-Txn` format. See [Identity](/ai-economy-sdk/identity).
 </Note>
 
+<Note>
+  Use the transport the server serves. A server built with `gate.wrap(mcp, transport="streamable-http")` answers at `/mcp`; a legacy server built with `transport="sse"` (or without `transport=`) answers at `/sse`.
+</Note>
+
 ## Spend controls
 
-The session uses the official `x402` client, which checks every payment against its spend controls before signing. A payment that fails the check is refused with `NoMatchingRequirementsError` and nothing is signed.
+The session uses the official `x402` client, which checks every payment against its spend controls before signing. A payment that fails the check is refused and nothing is signed: the x402 HTTP client raises `PaymentError` (caused by `NoMatchingRequirementsError`), which reaches your code from the `async with` block, inside an `ExceptionGroup`.
 
 **Defaults** (`spend_controls=None`):
 
@@ -95,7 +100,7 @@ async with paid_mcp_session(url, key, network, spend_controls=False) as s: ...
 """Paid MCP client session using ai-economy-sdk on Algorand LocalNet.
 
 Funds a fresh buyer account via the LocalNet dispenser, establishes a paid MCP
-session to http://127.0.0.1:9201/sse, calls the 'echo' tool, and verifies the on-chain
+session to http://127.0.0.1:9201/mcp, calls the 'echo' tool, and verifies the on-chain
 charge.
 
 How to run:
@@ -112,20 +117,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ai_economy_sdk import paid_mcp_session
+from ai_economy_sdk import AIEconomyError, paid_mcp_session
 from _localnet import ALGOD, new_funded_account
 
-SERVER_URL = "http://127.0.0.1:9201/sse"
+SERVER_URL = "http://127.0.0.1:9201/mcp"
 
 
 async def main() -> None:
     buyer_sk, buyer_addr = new_funded_account(algos=5)
     before_balance = ALGOD.account_info(buyer_addr)["amount"]
 
-    async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
-        result = await session.call_tool("echo", {"text": "hello world"})
-        output_text = result.content[0].text
-        print(f"Result: {output_text}")
+    try:
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            result = await session.call_tool("echo", {"text": "hello world"})
+            print(f"Result: {result.content[0].text}")
+    except AIEconomyError as err:  # payment refused, settlement failed, bad config ...
+        raise SystemExit(f"Paid call failed: {err}")
 
     after_balance = ALGOD.account_info(buyer_addr)["amount"]
     drop = before_balance - after_balance
@@ -151,12 +158,12 @@ Balance drop: 5000 microALGO
 
 ## How the negotiation works
 
-1. The session opens `GET /sse` and receives the endpoint for messages (`/messages/?session_id=...`).
+1. The session connects to the MCP endpoint: with Streamable HTTP it posts JSON-RPC requests to `/mcp`; with SSE it opens `GET /sse` and receives the endpoint for messages (`/messages/?session_id=...`).
 2. `call_tool` posts the JSON-RPC request `tools/call`.
 3. `PaymentGate` answers `402` with a `PAYMENT-REQUIRED` header: network, scheme `exact`, asset, amount, `payTo`, and the fee payer address in `extra.feePayer`.
 4. The client checks the requirement against its spend controls and its own network, fetches suggested parameters from algod, and builds the group: the fee payer's transaction (unsigned) and the buyer's payment with fee 0, which it signs.
 5. It resends the same request with `PAYMENT-SIGNATURE`.
-6. The server verifies, runs the tool, settles, and the result arrives on the SSE stream.
+6. The server verifies, runs the tool, settles, and returns the result (in the `POST` response with Streamable HTTP, on the event stream with SSE).
 
 ## JavaScript clients
 

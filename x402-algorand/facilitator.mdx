@@ -6,87 +6,43 @@ description: "Configure an x402Facilitator that verifies and settles Algorand pa
 ## What the facilitator does
 
 1. Checks the payment group against the requirement: scheme, network, group structure, genesis hash, security rules, recipient, asset, exact amount and the buyer's signature.
-2. Checks the fee payer transaction when the requirement names a fee payer.
+2. Checks every transaction sent by one of its own addresses (zero-amount self-payment, no close-out or rekey, fee at most 16,000 microALGO).
 3. Signs the fee payer transaction and simulates the whole group on algod.
 4. On settlement: verifies again, signs the fee payer transaction, submits the group and waits for confirmation.
 
 The full order of checks and their error codes is on [AVM exact scheme](/x402-algorand/avm-exact-scheme#verification-steps).
 
-## Implement a facilitator signer
+## Create a facilitator signer
 
-The facilitator needs a signer that implements [`FacilitatorAvmSigner`](/reference/python/x402-algorand/facilitator-avm-signer). It manages one or more fee payer accounts and talks to algod.
-
-```python
-import base64
-from algosdk import account, encoding, transaction
-from algosdk.v2client import algod
-from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
-
-class FacilitatorSigner:
-    def __init__(self, private_key: str, client: algod.AlgodClient):
-        self.private_key = private_key
-        self.address = account.address_from_private_key(private_key)
-        self.client = client
-
-    def get_addresses(self) -> list[str]:
-        return [self.address]
-
-    def sign_transaction(self, txn_bytes: bytes, fee_payer: str, network: str) -> bytes:
-        return self._sign_raw(txn_bytes)
-
-    def sign_group(self, group_bytes: list[bytes], fee_payer: str, indexes: list[int], network: str) -> list[bytes]:
-        signed = list(group_bytes)
-        for i in indexes:
-            signed[i] = self._sign_raw(group_bytes[i])
-        return signed
-
-    def simulate_group(self, group_bytes: list[bytes], network: str):
-        decoded = [self._decode(b) for b in group_bytes]
-        request = SimulateRequest(
-            txn_groups=[SimulateRequestTransactionGroup(txns=decoded)],
-            allow_empty_signatures=True,
-        )
-        result = self.client.simulate_transactions(request)
-        groups = result.get("txn-groups", [])
-        if groups and groups[0].get("failure-message"):
-            raise RuntimeError(groups[0]["failure-message"])
-        return result
-
-    def send_group(self, group_bytes: list[bytes], network: str) -> str:
-        return self.client.send_transactions([self._decode(b) for b in group_bytes])
-
-    def confirm_transaction(self, txid: str, network: str, rounds: int = 4):
-        return transaction.wait_for_confirmation(self.client, txid, rounds)
-
-    def _decode(self, raw: bytes):
-        return encoding.msgpack_decode(base64.b64encode(raw).decode())
-
-    def _sign_raw(self, txn_bytes: bytes) -> bytes:
-        txn = self._decode(txn_bytes)
-        return base64.b64decode(encoding.msgpack_encode(txn.sign(self.private_key)))
-```
-
-`DefaultAvmSigner(private_key, algod_client=...)` from `ai-economy-sdk` implements the same protocol.
-
-## Register it
+The facilitator needs a signer that implements [`FacilitatorAvmSigner`](/reference/python/x402-algorand/facilitator-avm-signer): it manages one or more fee payer accounts and talks to algod. [`ServerAvmSigner`](/reference/python/x402-algorand/server-avm-signer) is a ready-made one:
 
 ```python
+import os
 from algosdk.v2client import algod
 from x402 import x402Facilitator
-from x402_algorand.constants import ALGORAND_MAINNET_CAIP2
-from x402_algorand.exact.register import register_exact_avm_facilitator
+from x402_algorand import ALGORAND_MAINNET_CAIP2, ServerAvmSigner
+from x402_algorand.exact import register_exact_avm_facilitator
 
 algod_client = algod.AlgodClient("", "https://mainnet-api.algonode.cloud")
+signer = ServerAvmSigner.from_mnemonic(os.environ["FEE_PAYER_MNEMONIC"], algod_client)
+
 facilitator = x402Facilitator()
-register_exact_avm_facilitator(facilitator, FacilitatorSigner(fee_payer_private_key, algod_client), ALGORAND_MAINNET_CAIP2)
+register_exact_avm_facilitator(facilitator, signer, ALGORAND_MAINNET_CAIP2)
 ```
+
+- `ServerAvmSigner([key1, key2], algod_client)` manages several fee payers; the facilitator picks one at random per request.
+- With an `algod_client` (or `algod_url=` / `algod_token=`), the first use for a network checks that the node's genesis hash matches it and raises `NetworkMismatchError` otherwise. Without one, the signer uses the algod URL configured for the network (AlgoNode for MainNet and TestNet).
+- `simulate_group` raises `SimulationError` when algod reports that the group would fail; `sign_transaction` / `sign_group` raise `SigningError` for an address the signer does not manage.
+- Keys stay in private attributes and are not shown by `repr()`, exception messages or logs. `signer.address` is the first managed address, handy as `pay_to`.
+
+To keep fee payer keys in a KMS or HSM, implement the protocol yourself. `DefaultAvmSigner(private_key, algod_client=...)` from `ai-economy-sdk` also implements it.
 
 `networks` takes one network id or a list. The helper also registers the scheme for the x402 v1 names `algorand-mainnet` and `algorand-testnet`.
 
 ## Verify and settle
 
 - `facilitator.verify(payload, requirements)` returns `VerifyResponse(is_valid=True, payer=<buyer>)`, or `is_valid=False` with `invalid_reason` set to one of the [error codes](/resources/error-codes). Nothing is submitted.
-- `facilitator.settle(payload, requirements)` verifies again, submits the group, waits up to 4 rounds for confirmation and returns `SettleResponse(success=True, transaction=<txid>, network=<id>)`. If submission fails it returns `success=False` with `error_reason="transaction_failed"`.
+- `facilitator.settle(payload, requirements)` verifies again, submits the group, waits up to 4 rounds for confirmation and returns `SettleResponse(success=True, transaction=<txid>, network=<id>)`. Since 0.3.0, `transaction` is the ID of the buyer's payment (`paymentGroup[paymentIndex]`), as the specification requires; 0.2.x returned the fee payer transaction's ID when there was a fee payer. If submission fails it returns `success=False` with `error_reason="transaction_failed"`.
 
 The facilitator refuses a payment whose sender is one of its own fee payer addresses (`invalid_exact_avm_payload_fee_payer_transferring_funds`), so the fee payer can never be the buyer.
 

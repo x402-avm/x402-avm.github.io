@@ -41,7 +41,8 @@ Custom Indexer REST endpoint URL. If omitted, uses default endpoint.
 
 ## Raises
 
-- `ValueError`: If `network` is not a string, or if an unknown short CAIP-2 ID is passed without providing the full genesis hash or Algod client.
+- `ConfigurationError`: (a `ValueError`) If `network` is not a string.
+- `UnknownNetworkError`: (a `ValueError`) If an unknown short CAIP-2 ID is passed without the full genesis hash; use `network_from_algod` instead.
 
 ## Examples
 
@@ -54,4 +55,4 @@ Custom Indexer REST endpoint URL. If omitted, uses default endpoint.
 
 - `network_from_algod`: Discovers and registers network parameters from Algod.
 
-<sub>Source: [ai_economy_sdk/network.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/network.py#L227)</sub>
+<sub>Source: [ai_economy_sdk/network.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/network.py#L243)</sub>

@@ -10,7 +10,7 @@ A server needs the caller's address for passes, subscriptions, bulk discounts an
 | Format | Headers | Create with | Used by |
 |---|---|---|---|
 | Identity transaction (recommended) | `X-Identity-Txn` | `sign_identity_txn` (Python), `buildIdentityTxn` + `encodeIdentityHeader` (JavaScript) | Browser wallets and any client that can sign Algorand transactions |
-| Legacy signature | `x-sender-address`, `x-sender-timestamp`, `x-sender-signature` | `sign_identity` (Python) | `paid_mcp_session` (sent on every request when `identity=True`) |
+| Legacy signature | `x-sender-address`, `x-sender-timestamp`, `x-sender-signature` | `sign_identity` (Python, deprecated since 0.5.0) | `paid_mcp_session` (sent on every request when `identity=True`) |
 
 `PaymentGate` verifies both with `verify_identity`: it checks `X-Identity-Txn` first, against the gate's network, and falls back to the legacy headers.
 
@@ -43,7 +43,11 @@ The caller signs it, msgpack-encodes the signed transaction, base64-encodes the 
 
 ## The legacy headers
 
-`sign_identity(private_key)` signs the message `x402-identity:<address>:<timestamp>` with Ed25519 (algosdk's `sign_bytes`) and returns the three `x-sender-*` headers. `verify_identity` checks the address, the 120-second skew and the signature. Use them from servers and agents that hold a raw key; use `X-Identity-Txn` from wallets.
+`sign_identity(private_key)` signs the message `x402-identity:<address>:<timestamp>` with Ed25519 (algosdk's `sign_bytes`) and returns the three `x-sender-*` headers. `verify_identity` checks the address, the 120-second skew and the signature. Use `X-Identity-Txn` for new code.
+
+<Warning>
+  `sign_identity()` is deprecated since ai-economy-sdk 0.5.0 and emits a `DeprecationWarning`: use `sign_identity_txn()`, which binds the proof to one network. It still works, servers keep accepting the legacy headers, and `paid_mcp_session` still sends them.
+</Warning>
 
 ## Create and verify
 

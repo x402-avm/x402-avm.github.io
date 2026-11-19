@@ -16,6 +16,7 @@ Every public object of the `ai_economy_sdk` module ([`ai-economy-sdk` on PyPI](h
 | [`AIEconomySDK`](/reference/python/ai-economy-sdk/ai-economy-sdk) | class | Payment-gated MCP server SDK. |
 | [`DefaultAvmSigner`](/reference/python/ai-economy-sdk/default-avm-signer) | class | A default implementation of AvmSigner for convenience. |
 | [`ChainReader`](/reference/python/ai-economy-sdk/chain-reader) | class | Reader for Algorand blockchain state via an Indexer client. |
+| [`SettleOnSuccessMiddleware`](/reference/python/ai-economy-sdk/settle-on-success-middleware) | class | FastMCP middleware that settles payments on chain only upon tool success. |
 
 ## Client
 
@@ -45,6 +46,18 @@ Every public object of the `ai_economy_sdk` module ([`ai-economy-sdk` on PyPI](h
 | [`register_network`](/reference/python/ai-economy-sdk/register-network) | function | Register an Algorand network in x402's network tables (no-op for MainNet/TestNet, which are built in). |
 | [`network_from_algod`](/reference/python/ai-economy-sdk/network-from-algod) | function | Derive the CAIP-2 network id from an algod client and register it. |
 | [`Endpoints`](/reference/python/ai-economy-sdk/endpoints) | class | Connection parameters for Algorand node services. |
+
+## Errors
+
+| Object | Kind | Summary |
+|---|---|---|
+| [`AIEconomyError`](/reference/python/ai-economy-sdk/ai-economy-error) | class | Base class for every exception the SDK raises deliberately. |
+| [`ConfigurationError`](/reference/python/ai-economy-sdk/configuration-error) | class | Invalid arguments or configuration, detected before any payment is attempted. |
+| [`UnknownNetworkError`](/reference/python/ai-economy-sdk/unknown-network-error) | class | A network name or CAIP-2 identifier could not be resolved. |
+| [`AlgodClientRequiredError`](/reference/python/ai-economy-sdk/algod-client-required-error) | class | An operation needs an algod connection but the signer was created without one. |
+| [`PaymentVerificationError`](/reference/python/ai-economy-sdk/payment-verification-error) | class | A payment transaction group failed verification (for example, algod simulation). |
+| [`PaymentRequiredError`](/reference/python/ai-economy-sdk/payment-required-error) | class | A priced tool was invoked without a verified payment. |
+| [`SettlementError`](/reference/python/ai-economy-sdk/settlement-error) | class | A verified payment could not be settled on chain after the tool succeeded. |
 
 ## Constants
 

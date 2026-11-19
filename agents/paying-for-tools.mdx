@@ -27,7 +27,7 @@ sequenceDiagram
     Session-->>Agent: CallToolResult
 ```
 
-If the price is outside the spend controls, the session refuses to create the payment (`NoMatchingRequirementsError` in the x402 client) and nothing is signed.
+If the price is outside the spend controls, the session refuses to create the payment and nothing is signed. The x402 HTTP client raises `PaymentError` (caused by `NoMatchingRequirementsError`), which leaves the `async with` block inside an `ExceptionGroup`.
 
 ## Minimal agent session
 
@@ -37,7 +37,7 @@ import os
 
 from ai_economy_sdk import paid_mcp_session
 
-SERVER = "https://tools.example.com/sse"   # a paid MCP server
+SERVER = "https://tools.example.com/mcp"   # a paid MCP server (Streamable HTTP)
 
 async def run_agent() -> None:
     async with paid_mcp_session(
@@ -67,9 +67,9 @@ The session object is an `mcp.ClientSession`, so it plugs into agent frameworks 
 | A tool call priced 0, or covered by a pass | No |
 | A paid tool call that succeeds | Yes, exactly the quoted price |
 | A paid tool call whose tool raises or returns `isError` | No |
-| A paid call whose settlement fails (`ToolError: payment settlement failed`) | No |
+| A paid call whose settlement fails (`SettlementError: payment settlement failed`) | No |
 | The network fee | No: the server's fee payer pays it |
-| Resending the same signed payment | Rejected with `402` (`Replay detected`), not charged twice |
+| Resending the same signed payment | Rejected with `402` (`Replay detected` while the first use is in progress, `transaction_simulation_failed` once it has settled), not charged twice |
 
 ## Identity
 

@@ -7,8 +7,8 @@ description: "The x402 flow on Algorand: the 402 challenge, the two-transaction 
 
 [x402](https://www.x402.org) uses HTTP status `402 Payment Required` to sell a resource per request. For an MCP server wrapped with `PaymentGate`, a tool call goes through these steps:
 
-1. The client opens the MCP connection (`GET /sse`) and sends a tool call (`POST /messages/?session_id=...`). Opening the SSE stream and listing tools are free.
-2. `PaymentGate` intercepts the `tools/call` request, computes the price for that tool, arguments and caller, and answers `402` with a `PAYMENT-REQUIRED` header: the accepted scheme, network, asset, amount, recipient (`payTo`) and fee payer.
+1. The client sends a tool call as a JSON-RPC `tools/call` request: `POST /mcp` with the recommended Streamable HTTP transport, or `POST /messages/?session_id=...` after opening `GET /sse` with the legacy SSE transport. Connecting, initializing and listing tools are free.
+2. `PaymentGate` inspects every HTTP `POST`, intercepts the `tools/call` request, computes the price for that tool, arguments and caller, and answers `402` with a `PAYMENT-REQUIRED` header: the accepted scheme, network, asset, amount, recipient (`payTo`) and fee payer.
 3. The client builds and signs a payment that matches the requirement.
 4. The client retries the call with a `PAYMENT-SIGNATURE` header holding the signed transactions.
 5. The server verifies the payment, reserves it against replay, runs the tool, settles the payment on chain if the tool succeeded, and returns the result. A `PAYMENT-RESPONSE` header carries the settlement result.
@@ -23,7 +23,7 @@ sequenceDiagram
     participant Fac as Facilitator (in process)
     participant Algod as Algorand node (algod)
 
-    Client->>Gate: Tool call (POST /messages/?session_id=...)
+    Client->>Gate: Tool call (POST /mcp, or POST /messages/ on SSE)
     Gate-->>Client: 402 + PAYMENT-REQUIRED
     Note over Client: Build the 2-transaction group, sign transaction 1
     Client->>Gate: Retry with PAYMENT-SIGNATURE
@@ -42,7 +42,7 @@ sequenceDiagram
         Gate-->>Client: MCP error result
     else Settlement failed
         Note over Gate: Release the reservation
-        Gate-->>Client: ToolError "payment settlement failed: ..."
+        Gate-->>Client: SettlementError "payment settlement failed: ..."
     end
 ```
 
@@ -50,7 +50,7 @@ In `ai-economy-sdk` the facilitator runs in the same process as the resource ser
 
 ## The two-transaction atomic group
 
-When the server sponsors fees (it advertises `extra.feePayer` in the requirement, which `PaymentGate` always does), the payment is an [atomic group](/glossary#atomic-group) of two transactions:
+When the server sponsors fees (it advertises `extra.feePayer` in the requirement, which `PaymentGate` always does), the payment is an [atomic group](/glossary#atomic-group) of two transactions following the official Algorand exact scheme specification ([scheme_exact_algo.md](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_algo.md)):
 
 | Index | Type | Sender | Receiver | Amount | Fee | Signed by |
 |---|---|---|---|---|---|---|
@@ -74,7 +74,7 @@ Many payment flows charge first and refund on failure. `PaymentGate` does it the
 1. **Verify.** The facilitator checks the group against the requirement (scheme, network, recipient, asset, exact amount, group id, signature, fee payer rules) and simulates the group on algod with `allow_empty_signatures=True`. Simulation checks balances and validity without broadcasting.
 2. **Run the tool.** The signed group is held while the tool runs.
 3. **On failure, discard.** If the tool raises or returns an MCP error result (`isError`), the server releases the replay reservation and never submits the group. The buyer is not charged.
-4. **On success, settle.** The server signs the fee payer transaction, submits the group and waits for confirmation. If submission fails (for example the transactions expired), the client receives `ToolError("payment settlement failed: <reason>")` instead of the result.
+4. **On success, settle.** The server signs the fee payer transaction, submits the group and waits for confirmation. If submission fails (for example the transactions expired), the client receives `SettlementError("payment settlement failed: <reason>")` (a FastMCP `ToolError`) instead of the result.
 5. **Respond.** After settlement the replay entry is committed and the tool result is returned.
 
 The example [localnet/failed_call_not_charged.py](/ai-economy-sdk/settlement) shows a failing tool and a balance drop of 0.

@@ -66,7 +66,7 @@ TestNet is a public Algorand network whose ALGO has no value. Payments are real 
         asset_id=0,
         prices={"echo": 5000},
     )
-    uvicorn.run(gate.wrap(mcp), host="127.0.0.1", port=9201)
+    uvicorn.run(gate.wrap(mcp, transport="streamable-http"), host="127.0.0.1", port=9201)
     ```
   </Step>
   <Step title="Pay from the client">
@@ -81,7 +81,7 @@ TestNet is a public Algorand network whose ALGO has no value. Payments are real 
 
     async def main() -> None:
         buyer_sk = mnemonic.to_private_key(os.environ["BUYER_MNEMONIC"])
-        async with paid_mcp_session("http://127.0.0.1:9201/sse", buyer_sk, "testnet") as session:
+        async with paid_mcp_session("http://127.0.0.1:9201/mcp", buyer_sk, "testnet") as session:
             result = await session.call_tool("echo", {"text": "hello testnet"})
             print(result.content[0].text)
 
@@ -129,14 +129,12 @@ How to run:
 
 import os
 import sys
-from algosdk import mnemonic, transaction
 from algosdk.v2client import algod
 
 from x402.schemas import PaymentPayload, PaymentRequirements
-from x402_algorand.constants import ALGORAND_TESTNET_CAIP2
+from x402_algorand import ALGORAND_TESTNET_CAIP2, PayerAvmSigner, ServerAvmSigner
 from x402_algorand.exact.client import ExactAvmScheme as ClientScheme
 from x402_algorand.exact.facilitator import ExactAvmScheme as FacilitatorScheme
-from ai_economy_sdk import DefaultAvmSigner
 
 ALGOD_URL = "https://testnet-api.algonode.cloud"
 AMOUNT_MICROALGO = 1000  # 0.001 ALGO
@@ -158,17 +156,11 @@ def main():
     print("Initializing TestNet clients and accounts...")
     client = algod.AlgodClient("", ALGOD_URL)
 
-    buyer_sk = mnemonic.to_private_key(buyer_mn)
-    buyer_addr = mnemonic.to_public_key(buyer_mn)
-
-    server_sk = mnemonic.to_private_key(server_mn)
-    server_addr = mnemonic.to_public_key(server_mn)
-
+    buyer_signer = PayerAvmSigner.from_mnemonic(buyer_mn)
+    server_signer = ServerAvmSigner.from_mnemonic(server_mn, client)
+    buyer_addr, server_addr = buyer_signer.address, server_signer.address
     print(f"Buyer address:  {buyer_addr}")
     print(f"Server address: {server_addr}")
-
-    buyer_signer = DefaultAvmSigner(buyer_sk, algod_client=client)
-    server_signer = DefaultAvmSigner(server_sk, algod_client=client)
 
     client_scheme = ClientScheme(buyer_signer, algod_url=ALGOD_URL)
     facilitator_scheme = FacilitatorScheme(server_signer)
@@ -220,11 +212,12 @@ To price tools in USDC on TestNet:
 
    ```python
    from algosdk.transaction import AssetTransferTxn, wait_for_confirmation
+   from algosdk.atomic_transaction_composer import AccountTransactionSigner
 
    def opt_in(algod_client, address: str, private_key: str, asset_id: int) -> None:
        sp = algod_client.suggested_params()
        txn = AssetTransferTxn(sender=address, sp=sp, receiver=address, amt=0, index=asset_id)
-       txid = algod_client.send_transaction(txn.sign(private_key))
+       txid = algod_client.send_transaction(AccountTransactionSigner(private_key).sign_transactions([txn], [0])[0])
        wait_for_confirmation(algod_client, txid, 4)
    ```
 
@@ -419,9 +412,13 @@ You can validate payment groups against live TestNet state without keys or funds
     import algosdk from 'algosdk';
     import {
       TESTNET,
+      X402AvmError,
       algodClient,
       payForRequirement,
     } from 'x402-avm-js';
+
+    // Refuse anything above 10,000 base units (the default cap is 1,000,000).
+    const SPEND_CONTROLS = { maxAmount: 10_000n };
 
     async function fundedUsdcHolders(net, algod) {
       const url = `${net.indexerUrl}/v2/assets/${net.usdc}/balances?currency-greater-than=5000000&limit=40`;
@@ -478,7 +475,7 @@ You can validate payment groups against live TestNet state without keys or funds
           accepts: [requirement],
         };
 
-        const paymentSignatureHeader = await payForRequirement(challenge, payer, algod, emptySigner);
+        const paymentSignatureHeader = await payForRequirement(challenge, payer, algod, emptySigner, SPEND_CONTROLS);
         const decoded = JSON.parse(new TextDecoder().decode(algosdk.base64ToBytes(paymentSignatureHeader)));
 
         const txns = decoded.payload.paymentGroup.map(
@@ -509,7 +506,8 @@ You can validate payment groups against live TestNet state without keys or funds
     }
 
     main().catch((err) => {
-      console.error('TestNet simulation failed:', err);
+      // x402-avm-js errors carry a stable `code`, e.g. SPEND_LIMIT_EXCEEDED.
+      console.error('TestNet simulation failed:', err instanceof X402AvmError ? `${err.code}: ${err.message}` : err);
       process.exit(1);
     });
     ```

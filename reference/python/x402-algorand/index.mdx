@@ -24,6 +24,13 @@ Every public object of the `x402_algorand` module ([`x402-algorand` on PyPI](htt
 | [`ExactAvmServerScheme`](/reference/python/x402-algorand/exact-avm-server-scheme) | class | AVM server implementation for the Exact payment scheme (V2). |
 | [`ExactAvmFacilitatorScheme`](/reference/python/x402-algorand/exact-avm-facilitator-scheme) | class | AVM facilitator implementation for the Exact payment scheme (V2). |
 
+## Signers
+
+| Object | Kind | Summary |
+|---|---|---|
+| [`PayerAvmSigner`](/reference/python/x402-algorand/payer-avm-signer) | class | Client-side signer (`ClientAvmSigner`) for a single Algorand account. |
+| [`ServerAvmSigner`](/reference/python/x402-algorand/server-avm-signer) | class | Facilitator-side signer (`FacilitatorAvmSigner`) backed by private keys and algod. |
+
 ## Signer protocols
 
 | Object | Kind | Summary |
@@ -71,6 +78,17 @@ Every public object of the `x402_algorand` module ([`x402-algorand` on PyPI](htt
 | [`parse_money_to_decimal`](/reference/python/x402-algorand/parse-money-to-decimal) | function | Parse money value to decimal. |
 | [`to_atomic_amount`](/reference/python/x402-algorand/to-atomic-amount) | function | Convert decimal amount to atomic units. |
 | [`from_atomic_amount`](/reference/python/x402-algorand/from-atomic-amount) | function | Convert atomic units to decimal amount. |
+
+## Errors
+
+| Object | Kind | Summary |
+|---|---|---|
+| [`X402AlgorandError`](/reference/python/x402-algorand/x402-algorand-error) | class | Base class for all exceptions raised by x402-algorand. |
+| [`NetworkError`](/reference/python/x402-algorand/network-error) | class | A network identifier is malformed, unsupported, or not registered. |
+| [`NetworkMismatchError`](/reference/python/x402-algorand/network-mismatch-error) | class | An algod node is connected to a different network than the one requested. |
+| [`TransactionDecodeError`](/reference/python/x402-algorand/transaction-decode-error) | class | Bytes or base64 text could not be decoded as an Algorand transaction. |
+| [`SigningError`](/reference/python/x402-algorand/signing-error) | class | A signer could not sign: bad key material or an address it does not manage. |
+| [`SimulationError`](/reference/python/x402-algorand/simulation-error) | class | An algod `simulate` call reported that the transaction group would fail. |
 
 ## Constants
 

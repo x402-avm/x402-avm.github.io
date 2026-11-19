@@ -5,6 +5,8 @@ description: "Charge per call for MCP tools and HTTP APIs, settled on Algorand w
 
 x402-avm is a set of three open-source packages for selling and buying tool calls with the [x402](/glossary#x402) payment protocol on Algorand. A server answers an unpaid call with HTTP `402 Payment Required` and a price. The client signs an Algorand payment and retries. The server runs the tool, and only if the tool succeeds does it submit the payment to the chain.
 
+x402-avm is an independent project, not affiliated with GoPlausible's x402-avm packages, from which x402-algorand is derived (see [NOTICE](https://github.com/x402-avm/x402-algorand/blob/main/NOTICE)).
+
 <Columns cols={3}>
   <Card title="ai-economy-sdk" icon="server" href="/ai-economy-sdk/overview">
     Python, MIT. Charge for every MCP tool call, and pay for tools from Python clients and agents.
@@ -38,6 +40,8 @@ x402-avm is a set of three open-source packages for selling and buying tool call
 
 ## A paid tool in a few lines
 
+Excerpts. The [Quickstart](/quickstart) runs a complete version.
+
 <CodeGroup>
 ```python server.py
 from fastmcp import FastMCP
@@ -57,33 +61,34 @@ gate = PaymentGate(
     asset_id=0,
     prices={"echo": 5000},  # microALGO per call
 )
-app = gate.wrap(mcp)  # ASGI app, serve with uvicorn
+app = gate.wrap(mcp, transport="streamable-http")  # ASGI app, MCP endpoint POST /mcp
 ```
 
 ```python client.py
 from ai_economy_sdk import paid_mcp_session
 
-async with paid_mcp_session("http://127.0.0.1:9201/sse", buyer_sk, "localnet") as session:
+async with paid_mcp_session("http://127.0.0.1:9201/mcp", buyer_sk, "localnet") as session:
     result = await session.call_tool("echo", {"text": "hello world"})
     print(result.content[0].text)  # echo: hello world
 ```
 
 ```ts client.ts
-import { algodClient, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+import algosdk from 'algosdk';
+import { LOCALNET_ENDPOINTS, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
 
-const algod = algodClient('localnet');
+const algod = new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl);
 const res = await fetch(url);
 if (res.status === 402) {
   const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
-  const header = await payForRequirement(required, myAddress, algod, (txns, indexes) =>
-    wallet.signTransactions(txns, indexes)
+  const header = await payForRequirement(
+    required, myAddress, algod,
+    (txns, indexes) => wallet.signTransactions(txns, indexes),
+    { maxAmount: 10_000n }, // refuse anything above 10,000 base units (default cap: 1,000,000)
   );
   await fetch(url, { headers: { 'PAYMENT-SIGNATURE': header } });
 }
 ```
 </CodeGroup>
-
-The [Quickstart](/quickstart) runs a complete version of this on LocalNet in about five minutes.
 
 ## Next steps
 

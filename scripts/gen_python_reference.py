@@ -19,6 +19,10 @@ they are the sibling folders ``../ai-economy-sdk`` and ``../x402-algorand``.
 
 The generated pages are committed. Re-run the script whenever a docstring or a
 public signature changes, then run ``npx mint@4.3.63 broken-links``.
+
+Objects whose docstring has no Examples section can get one from
+``scripts/python_reference_examples.json`` (keyed by ``<package key>:<public name>``).
+Prose outside code is normalised to the site's terminology ("microALGO").
 """
 from __future__ import annotations
 
@@ -37,6 +41,11 @@ except ImportError:  # pragma: no cover
 
 SITE = Path(__file__).resolve().parent.parent
 OUT_ROOT = SITE / "reference" / "python"
+EXAMPLES_FILE = SITE / "scripts" / "python_reference_examples.json"
+EXTRA_EXAMPLES: dict[str, str] = {
+    k: v for k, v in (json.loads(EXAMPLES_FILE.read_text()) if EXAMPLES_FILE.exists() else {}).items()
+    if not k.startswith("_")
+}
 REFERENCE_TAB = "API reference"
 KNOWN_CONSTANTS: dict[str, str] = {}
 GENERATED_NOTE = (
@@ -97,6 +106,7 @@ PACKAGES = [
                 Obj("ai_economy_sdk.AIEconomySDK", import_from="ai_economy_sdk"),
                 Obj("ai_economy_sdk.signer.DefaultAvmSigner", import_from="ai_economy_sdk"),
                 Obj("ai_economy_sdk.chain.ChainReader", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.gate.SettleOnSuccessMiddleware", import_from="ai_economy_sdk"),
             ]),
             Group("Client", [
                 Obj("ai_economy_sdk.client.paid_mcp_session", import_from="ai_economy_sdk"),
@@ -117,6 +127,15 @@ PACKAGES = [
                 Obj("ai_economy_sdk.network.register_network", import_from="ai_economy_sdk"),
                 Obj("ai_economy_sdk.network.network_from_algod", import_from="ai_economy_sdk"),
                 Obj("ai_economy_sdk.network.Endpoints", import_from="ai_economy_sdk.network"),
+            ]),
+            Group("Errors", [
+                Obj("ai_economy_sdk.exceptions.AIEconomyError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.ConfigurationError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.UnknownNetworkError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.AlgodClientRequiredError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.PaymentVerificationError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.PaymentRequiredError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.SettlementError", import_from="ai_economy_sdk"),
             ]),
         ],
         constants=ConstantsPage(
@@ -150,6 +169,10 @@ PACKAGES = [
                 Obj("x402_algorand.exact.server.ExactAvmScheme", name="ExactAvmServerScheme", import_from="x402_algorand.exact"),
                 Obj("x402_algorand.exact.facilitator.ExactAvmScheme", name="ExactAvmFacilitatorScheme", import_from="x402_algorand.exact"),
             ]),
+            Group("Signers", [
+                Obj("x402_algorand.signer.PayerAvmSigner", import_from="x402_algorand"),
+                Obj("x402_algorand.signer.ServerAvmSigner", import_from="x402_algorand"),
+            ]),
             Group("Signer protocols", [
                 Obj("x402_algorand.signer.ClientAvmSigner", import_from="x402_algorand"),
                 Obj("x402_algorand.signer.FacilitatorAvmSigner", import_from="x402_algorand"),
@@ -182,6 +205,14 @@ PACKAGES = [
                 Obj("x402_algorand.utils.parse_money_to_decimal", import_from="x402_algorand"),
                 Obj("x402_algorand.utils.to_atomic_amount", import_from="x402_algorand"),
                 Obj("x402_algorand.utils.from_atomic_amount", import_from="x402_algorand"),
+            ]),
+            Group("Errors", [
+                Obj("x402_algorand.errors.X402AlgorandError", import_from="x402_algorand"),
+                Obj("x402_algorand.errors.NetworkError", import_from="x402_algorand"),
+                Obj("x402_algorand.errors.NetworkMismatchError", import_from="x402_algorand"),
+                Obj("x402_algorand.errors.TransactionDecodeError", import_from="x402_algorand"),
+                Obj("x402_algorand.errors.SigningError", import_from="x402_algorand"),
+                Obj("x402_algorand.errors.SimulationError", import_from="x402_algorand"),
             ]),
         ],
         constants=ConstantsPage(
@@ -454,6 +485,25 @@ def render_examples(obj) -> str:
     return "\n\n".join(blocks)
 
 
+_MICRO = re.compile(r"\bmicro[Aa]lgos?\b")
+
+
+def normalize_terms(content: str) -> str:
+    """Write "microALGO" in prose; leave fenced code and inline code untouched."""
+    out, in_fence = [], False
+    for line in content.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        parts = re.split(r"(`[^`]*`)", line)
+        out.append("".join(p if p.startswith("`") else _MICRO.sub("microALGO", p) for p in parts))
+    return "\n".join(out)
+
+
 def render_admonitions(obj) -> tuple[str, str]:
     """Return (notes, see_also) markdown."""
     notes, see = [], []
@@ -559,6 +609,11 @@ def render_method(meth, owner: str) -> str:
     return f"### `{name}`\n\n```python\n{sig}\n```\n\n" + "\n\n".join(body)
 
 
+def extra_example(pkg: Package, public_name: str) -> str:
+    code = EXTRA_EXAMPLES.get(f"{pkg.key}:{public_name}")
+    return f"```python\n{code.strip()}\n```" if code else ""
+
+
 def page_for(obj, public_name: str, import_from: str, pkg: Package) -> tuple[str, str]:
     summary = first_sentence(obj.docstring.value) if obj.docstring else public_name
     kind = "class" if obj.is_class else "function"
@@ -603,7 +658,7 @@ def page_for(obj, public_name: str, import_from: str, pkg: Package) -> tuple[str
         notes, see = render_admonitions(obj)
         if notes:
             lines += ["## Notes", "", notes, ""]
-        ex = render_examples(obj)
+        ex = render_examples(obj) or extra_example(pkg, public_name)
         if ex:
             lines += ["## Examples", "", ex, ""]
         methods = []
@@ -625,10 +680,12 @@ def page_for(obj, public_name: str, import_from: str, pkg: Package) -> tuple[str
             lines += ["## See also", "", see, ""]
     else:
         lines += [callable_body(obj, public_name, pkg), ""]
-    lines += [f"<sub>Source: [{pkg.module}/{Path(obj.filepath).name}]({source_link(obj, pkg)})</sub>", ""]
+        if not render_examples(obj) and extra_example(pkg, public_name):
+            lines += ["## Examples", "", extra_example(pkg, public_name), ""]
+    lines += [f"<sub>Source: [{source_link(obj, pkg).split('/blob/main/', 1)[1].split('#')[0]}]({source_link(obj, pkg)})</sub>", ""]
     content = "\n".join(lines)
     content = re.sub(r"\n{3,}", "\n\n", content)
-    return kind, content
+    return kind, normalize_terms(content)
 
 
 def constants_page(loader_pkg, pkg: Package, cp: ConstantsPage) -> str:
@@ -659,7 +716,7 @@ def constants_page(loader_pkg, pkg: Package, cp: ConstantsPage) -> str:
             lines += [f"```python\n{name}{annot} = ...  # see source\n```", ""]
         else:
             lines += [f"```python\n{name}{annot} = {value}\n```", ""]
-        lines += [f"<sub>Source: [{pkg.module}/{Path(obj.filepath).name}]({source_link(obj, pkg)})</sub>", ""]
+        lines += [f"<sub>Source: [{source_link(obj, pkg).split('/blob/main/', 1)[1].split('#')[0]}]({source_link(obj, pkg)})</sub>", ""]
     if pkg.extra_note:
         lines += [pkg.extra_note, ""]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines))
@@ -767,11 +824,11 @@ def main() -> None:
             nav_pages.append({"group": group.title, "pages": pages})
         if pkg.constants:
             cp = pkg.constants
-            (out_dir / f"{cp.slug}.mdx").write_text(constants_page(loaded, pkg, cp))
+            (out_dir / f"{cp.slug}.mdx").write_text(normalize_terms(constants_page(loaded, pkg, cp)))
             entries.append(("Constants", [(", ".join(p.rsplit(".", 1)[1] for p in cp.paths[:3]) + ", ...", "constants", cp.slug, cp.description)]))
             nav_pages.append(f"reference/python/{pkg.key}/{cp.slug}")
             total += 1
-        (out_dir / "index.mdx").write_text(overview_page(pkg, entries))
+        (out_dir / "index.mdx").write_text(normalize_terms(overview_page(pkg, entries)))
         nav[pkg.key] = nav_pages
     update_docs_json(nav)
     print(f"wrote {total} object pages and {len(PACKAGES)} overview pages under {OUT_ROOT.relative_to(SITE)}")

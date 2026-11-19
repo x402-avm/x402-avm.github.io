@@ -239,6 +239,39 @@ def main() -> None:
     (site / "sitemap.xml").write_text("\n".join(sitemap) + "\n")
     print(f"wrote {len(urls)} Markdown pages, llms.txt, llms-full.txt and sitemap.xml into {site}")
 
+    fixed_html = fix_html_seo(site, base)
+    print(f"fixed SEO tags and URLs in {fixed_html} HTML files under {site}")
+
+
+def fix_html_seo(site: Path, base: str) -> int:
+    """Fix canonical, og:url, and add og:image and twitter:card meta tags in all *.html files."""
+    og_image_meta = f'<meta property="og:image" content="{base}/images/og.png">'
+    twitter_card_meta = '<meta name="twitter:card" content="summary_large_image">'
+    count = 0
+
+    for html_file in site.rglob("*.html"):
+        content = html_file.read_text(encoding="utf-8")
+        orig = content
+
+        # Replace https://local. with the base URL
+        content = content.replace("https://local.", base)
+
+        # Ensure og:image is present in <head>
+        if 'property="og:image"' not in content and "property='og:image'" not in content:
+            if "</head>" in content:
+                content = content.replace("</head>", f"  {og_image_meta}\n</head>", 1)
+
+        # Ensure twitter:card is present in <head>
+        if 'name="twitter:card"' not in content and "name='twitter:card'" not in content:
+            if "</head>" in content:
+                content = content.replace("</head>", f"  {twitter_card_meta}\n</head>", 1)
+
+        if content != orig:
+            html_file.write_text(content, encoding="utf-8")
+            count += 1
+
+    return count
+
 
 if __name__ == "__main__":
     main()

@@ -9,13 +9,18 @@ description: "Fixes for common problems with LocalNet, networks, opt-ins, balanc
 |---|---|---|
 | `Connection refused` on port 4001, or `MaxRetryError ... port=4001` | LocalNet is not running | `algokit localnet start` |
 | `invalid_exact_avm_payload_genesis_hash_mismatch` | Client and server use different networks, or LocalNet was reset under a running server | Use the same network on both sides; restart servers after `algokit localnet reset` |
-| `ValueError: algod is on ... but the payment is for ...` | The client's algod is on another network than the offer | Point the client at an algod on the offer's network |
+| `NetworkMismatchError: algod is on ... but the payment is for ...` | The client's algod is on another network than the offer | Point the client at an algod on the offer's network |
 | `transaction_simulation_failed` mentioning an asset | An account has not opted in to the ASA | Opt in both `pay_to` and the buyer |
 | `transaction_simulation_failed` mentioning balance, or `below min` | An account would drop below its minimum balance | Add ALGO: 0.1 ALGO base plus 0.1 ALGO per opted-in asset |
-| `ValueError: price ... does not cover facilitator fees` | ALGO price in `(0, 2000]` | Raise the price above 2,000 microALGO or pass `allow_loss=True` |
-| `NoMatchingRequirementsError` on the client | The price is above the spend cap, the asset is not allowed, or the offer is for another network | Check the offer; adjust `spend_controls` deliberately |
-| `ToolError: payment settlement failed: ...` | Submission failed: expired rounds, fee payer out of ALGO, node error | Check the fee payer's balance and algod; the buyer was not charged |
-| `402` with `Replay detected` | The same signed payment was sent twice | Build a new payment for each call |
+| `ConfigurationError: price ... does not cover facilitator fees` | ALGO price in `(0, 2000]` | Raise the price above 2,000 microALGO or pass `allow_loss=True` |
+| `NoMatchingRequirementsError`, or `PaymentError: Failed to handle payment: ...` from the httpx client or `paid_mcp_session` | The price is above the spend cap, the asset is not allowed, or the offer is for another network | Check the offer; adjust `spend_controls` deliberately |
+| `SpendLimitExceededError` / `PaymentNotAllowedError` in x402-avm-js | The offer is above `maxAmount` (1,000,000 base units by default) or not on an allow list | Check the offer; raise `maxAmount` deliberately |
+| `FutureWarning: PaymentGate.wrap() was called without transport=` | `wrap(mcp)` without `transport=` serves legacy SSE | Pass `transport="streamable-http"` (recommended) or `transport="sse"` |
+| `PaymentRequiredError: payment required: tool ... must be called through the payment gate` | A priced tool was reached without passing through the gate, for example over a transport the gate does not wrap | Serve the app built by `gate.wrap(...)`, or install both `gate.middleware()` and `SettleOnSuccessMiddleware` |
+| HTTP `500` with `payment gate misconfigured` | The app was built without `SettleOnSuccessMiddleware` | Use `gate.wrap(...)` or `mcp.add_middleware(SettleOnSuccessMiddleware(gate))` |
+| The MCP client cannot connect, or gets `404` / `405` | Client and server use different transports | Use `.../mcp` for `transport="streamable-http"` and `.../sse` for `transport="sse"` |
+| `SettlementError: payment settlement failed: ...` | Submission failed: expired rounds, fee payer out of ALGO, node error | Check the fee payer's balance and algod; the buyer was not charged |
+| `402` with `Replay detected`, or `transaction_simulation_failed` on a resent payment | The same signed payment was sent twice | Build a new payment for each call |
 | `invalid_exact_avm_payload_recipient_mismatch` | The payment goes to another address than `payTo` | Use the `payTo` from the challenge |
 | `invalid_exact_avm_payload_invalid_signature` | Wrong key, or the transaction changed after signing | Sign with the sender's key after the group id is set |
 
@@ -42,10 +47,11 @@ An account must opt in to an ASA, such as USDC, before it can receive it. Opt in
 
 ```python
 from algosdk.transaction import AssetTransferTxn, wait_for_confirmation
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
 
 sp = algod_client.suggested_params()
 txn = AssetTransferTxn(sender=address, sp=sp, receiver=address, amt=0, index=asset_id)
-txid = algod_client.send_transaction(txn.sign(private_key))
+txid = algod_client.send_transaction(AccountTransactionSigner(private_key).sign_transactions([txn], [0])[0])
 wait_for_confirmation(algod_client, txid, 4)
 ```
 
@@ -69,7 +75,7 @@ The official `x402` httpx client does not loop: after a bounded number of paid r
 ## Prices below the fee floor
 
 ```text
-ValueError: price 1000 for tool 'summarize' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True
+ai_economy_sdk.exceptions.ConfigurationError: price 1000 for tool 'summarize' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True
 ```
 
 For ALGO prices the server pays 2,000 microALGO in fees per settled call. Charge more than that (3,000 microALGO is a sensible minimum), or pass `allow_loss=True` to subsidize calls on purpose. Prices returned by a pricing function in that range are raised to 2,001 microALGO with a warning.

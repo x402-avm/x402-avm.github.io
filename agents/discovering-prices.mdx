@@ -68,7 +68,22 @@ if (res.status === 402) {
 ```
 </CodeGroup>
 
-For an MCP server behind `PaymentGate`, the challenge is the response to the `POST /messages/?session_id=...` request that carries the `tools/call`. The MCP SDK's client does not surface that HTTP response to your code, so inspecting MCP prices before paying means speaking the SSE transport at the HTTP level. Unless you need per-call approval, rely on spend controls instead.
+For an MCP server behind `PaymentGate`, the challenge is the HTTP response to the `POST` that carries the `tools/call`. The MCP SDK's client does not surface that HTTP response to your code. With a server on the Streamable HTTP transport (stateless, the default of `gate.wrap(mcp, transport="streamable-http")`), you can ask for the price with one plain HTTP request, without the MCP `initialize` handshake:
+
+```python
+import base64, json
+import httpx
+
+call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "echo", "arguments": {"text": "hi"}}}
+r = httpx.post("http://127.0.0.1:9201/mcp", json=call,
+               headers={"Accept": "application/json, text/event-stream"})
+if r.status_code == 402:
+    offer = json.loads(base64.b64decode(r.headers["payment-required"]))["accepts"][0]
+    print(offer["amount"], offer["asset"], offer["payTo"])
+```
+
+Nothing is paid or signed. On the legacy SSE transport the same request goes to the session's `/messages/?session_id=...` endpoint, so you would have to speak SSE at the HTTP level. Unless you need per-call approval, rely on spend controls instead. Every field of the challenge is described on [HTTP 402 response reference](/resources/http-402-reference).
 
 ## Policies for x402 clients
 

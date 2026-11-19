@@ -11,7 +11,7 @@ from ai_economy_sdk import AIEconomySDK
 
 ```python Signature
 class AIEconomySDK(
-    server_signer: Any,
+    server_signer: ServerSigner,
     network: str,
     asset_id: str | int,
     pay_to_address: str,
@@ -29,7 +29,7 @@ subscription checking, and automatic PaymentGate ASGI integration.
 
 ## Constructor parameters
 
-<ParamField body="server_signer" type="Any" required>
+<ParamField body="server_signer" type="ServerSigner" required>
 Signer instance (e.g., `DefaultAvmSigner`) providing private keys and
 algod connection to sponsor fees as fee payer.
 </ParamField>
@@ -39,7 +39,7 @@ Network name (`"mainnet"`, `"testnet"`, `"localnet"`) or CAIP-2 identifier.
 </ParamField>
 
 <ParamField body="asset_id" type="str | int" required>
-Asset ID accepted for payments (0 for native ALGO in microAlgos, or ASA ID).
+Asset ID accepted for payments (0 for native ALGO in microALGO, or ASA ID).
 </ParamField>
 
 <ParamField body="pay_to_address" type="str" required>
@@ -87,7 +87,11 @@ ChainReader instance if `indexer_url` is provided.
 ### `add_tool`
 
 ```python
-def add_tool(name: str, description: str, pricing_func: Callable)
+def add_tool(
+    name: str,
+    description: str,
+    pricing_func: ToolPriceFunction,
+) -> Callable[[_F], _F]
 ```
 
 Decorator — register an MCP tool with dynamic pricing.
@@ -102,9 +106,10 @@ Unique tool name recognized by MCP clients.
 Human-readable description of tool behavior.
 </ParamField>
 
-<ParamField body="pricing_func" type="Callable" required>
+<ParamField body="pricing_func" type="ToolPriceFunction" required>
 Pricing function calculating cost in base units. May accept
-`(args, sender)` or `(args)`.
+`(args, sender)` or `(args)`; which one is decided from its signature
+when the tool is registered.
 </ParamField>
 
 **Returns**
@@ -112,6 +117,10 @@ Pricing function calculating cost in base units. May accept
 <ResponseField name="returns" type="Callable">
 Decorator wrapping the target tool function.
 </ResponseField>
+
+**Raises**
+
+- `ConfigurationError`: If `pricing_func` accepts neither `(args, sender)` nor `(args)`.
 
 **Example**
 
@@ -129,7 +138,7 @@ Decorator wrapping the target tool function.
 ### `build_app`
 
 ```python
-def build_app()
+def build_app(transport: Transport | None = None, **wrap_kwargs: Any = {}) -> Any
 ```
 
 Build and wrap the FastMCP application with PaymentGate.
@@ -137,9 +146,19 @@ Build and wrap the FastMCP application with PaymentGate.
 Constructs a `PaymentGate` instance wired with registered pricing
 functions and wraps the FastMCP application as an ASGI app.
 
+**Parameters**
+
+<ParamField body="transport" type="Transport | None" default="None">
+Passed to :meth:`PaymentGate.wrap`. When omitted, the legacy SSE transport is
+served and a `FutureWarning` is emitted (the default will change to
+`"streamable-http"`).
+</ParamField>
+
+<ParamField body="wrap_kwargs" type="Any" default="&#123;&#125;" />
+
 **Returns**
 
-<ResponseField name="returns" type="Any">
+<ResponseField name="returns" type="starlette.applications.Starlette">
 ASGI application ready to serve with uvicorn.
 </ResponseField>
 
@@ -147,7 +166,7 @@ ASGI application ready to serve with uvicorn.
 
 ```python
 # Needs configured server:
-# app = sdk.build_app()
+# app = sdk.build_app(transport="streamable-http")
 # uvicorn.run(app, host="127.0.0.1", port=8000)
 ```
 
@@ -209,7 +228,7 @@ Number of days prior to current time to tally.
 **Returns**
 
 <ResponseField name="returns" type="int">
-Total spend in base units (microAlgos for ALGO, or base ASA units).
+Total spend in base units (microALGO for ALGO, or base ASA units).
 </ResponseField>
 
 **Example**
@@ -229,4 +248,4 @@ Total spend in base units (microAlgos for ALGO, or base ASA units).
 - `PaymentGate`: Middleware powering the x402 payment enforcement.
 - `DefaultAvmSigner`: Default signing implementation.
 
-<sub>Source: [ai_economy_sdk/__init__.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/__init__.py#L73)</sub>
+<sub>Source: [ai_economy_sdk/__init__.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/__init__.py#L167)</sub>

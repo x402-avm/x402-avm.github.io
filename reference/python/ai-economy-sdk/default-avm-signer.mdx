@@ -10,7 +10,10 @@ from ai_economy_sdk import DefaultAvmSigner
 ```
 
 ```python Signature
-class DefaultAvmSigner(private_key: str, algod_client=None)
+class DefaultAvmSigner(
+    private_key: str,
+    algod_client: AlgodClient | None = None,
+)
 ```
 
 A default implementation of AvmSigner for convenience.
@@ -24,16 +27,12 @@ to handle signing and submitting single transactions or atomic transaction group
 Base64-encoded 32-byte Algorand private key.
 </ParamField>
 
-<ParamField body="algod_client" type="algosdk.v2client.algod.AlgodClient" default="None">
+<ParamField body="algod_client" type="AlgodClient | None" default="None">
 Connected algod client used for group simulation, transmission, and confirmation.
 Default is None.
 </ParamField>
 
 ## Attributes
-
-<ResponseField name="private_key" type="str">
-The signing key.
-</ResponseField>
 
 <ResponseField name="address" type="str">
 The corresponding Algorand public address.
@@ -61,7 +60,7 @@ True
 ### `get_addresses`
 
 ```python
-def get_addresses()
+def get_addresses() -> list[str]
 ```
 
 Return the list of public addresses managed by this signer.
@@ -86,18 +85,21 @@ True
 ### `sign_transactions`
 
 ```python
-def sign_transactions(unsigned_txns, indexes)
+def sign_transactions(
+    unsigned_txns: list[bytes],
+    indexes: list[int],
+) -> list[bytes | None]
 ```
 
 Sign selected transactions in a list.
 
 **Parameters**
 
-<ParamField body="unsigned_txns" type="list of bytes" required>
+<ParamField body="unsigned_txns" type="list[bytes]" required>
 List of raw msgpack-encoded unsigned transaction bytes.
 </ParamField>
 
-<ParamField body="indexes" type="list or set of int" required>
+<ParamField body="indexes" type="list[int]" required>
 0-based indices in `unsigned_txns` to sign.
 </ParamField>
 
@@ -129,7 +131,7 @@ True
 ### `sign_transaction`
 
 ```python
-def sign_transaction(txn_bytes, fee_payer, network)
+def sign_transaction(txn_bytes: bytes, fee_payer: Any, network: str) -> bytes
 ```
 
 Sign a single raw transaction.
@@ -140,7 +142,7 @@ Sign a single raw transaction.
 Raw msgpack-encoded unsigned transaction bytes.
 </ParamField>
 
-<ParamField body="fee_payer" type="bool" required>
+<ParamField body="fee_payer" type="Any" required>
 Whether this signer acts as fee payer for the transaction.
 </ParamField>
 
@@ -173,22 +175,27 @@ True
 ### `sign_group`
 
 ```python
-def sign_group(group_bytes, fee_payer, indexes, network)
+def sign_group(
+    group_bytes: list[bytes],
+    fee_payer: Any,
+    indexes: list[int],
+    network: str,
+) -> list[bytes]
 ```
 
 Sign specified transactions within an atomic transaction group.
 
 **Parameters**
 
-<ParamField body="group_bytes" type="list of bytes" required>
+<ParamField body="group_bytes" type="list[bytes]" required>
 List of raw transaction bytes representing the atomic group.
 </ParamField>
 
-<ParamField body="fee_payer" type="bool" required>
+<ParamField body="fee_payer" type="Any" required>
 Whether this signer acts as fee payer for the group.
 </ParamField>
 
-<ParamField body="indexes" type="iterable of int" required>
+<ParamField body="indexes" type="list[int]" required>
 Indices within `group_bytes` to be signed by this signer.
 </ParamField>
 
@@ -222,7 +229,7 @@ their signed counterparts.
 ### `simulate_group`
 
 ```python
-def simulate_group(group_bytes, network)
+def simulate_group(group_bytes: list[bytes], network: str) -> dict[str, Any]
 ```
 
 Simulate execution of an atomic transaction group against algod.
@@ -232,7 +239,7 @@ Decodes the transactions, constructs a SimulateRequest with
 
 **Parameters**
 
-<ParamField body="group_bytes" type="list of bytes" required>
+<ParamField body="group_bytes" type="list[bytes]" required>
 List of raw msgpack-encoded transaction bytes in the group.
 </ParamField>
 
@@ -248,7 +255,8 @@ Raw simulation response dictionary from the algod node.
 
 **Raises**
 
-- `RuntimeError`: If `self.algod_client` is None, or if simulation fails with a failure message returned by algod.
+- `AlgodClientRequiredError`: (a `RuntimeError`) If `self.algod_client` is None.
+- `PaymentVerificationError`: (a `RuntimeError`) If simulation fails with a failure message from algod.
 
 **Example**
 
@@ -260,7 +268,7 @@ Raw simulation response dictionary from the algod node.
 ### `send_group`
 
 ```python
-def send_group(group_bytes, network)
+def send_group(group_bytes: list[bytes], network: str) -> str
 ```
 
 Broadcast a signed atomic transaction group to the network.
@@ -272,7 +280,7 @@ the on-chain state transition (transfers, fees, note payloads) becomes irreversi
 
 **Parameters**
 
-<ParamField body="group_bytes" type="list of bytes" required>
+<ParamField body="group_bytes" type="list[bytes]" required>
 List of signed raw transaction bytes.
 </ParamField>
 
@@ -288,7 +296,7 @@ First transaction ID (txid) of the submitted atomic group.
 
 **Raises**
 
-- `RuntimeError`: If `self.algod_client` is None.
+- `AlgodClientRequiredError`: (a `RuntimeError`) If `self.algod_client` is None.
 
 **Example**
 
@@ -300,7 +308,7 @@ First transaction ID (txid) of the submitted atomic group.
 ### `confirm_transaction`
 
 ```python
-def confirm_transaction(txid, network, rounds=4)
+def confirm_transaction(txid: str, network: str, rounds: int = 4) -> dict[str, Any]
 ```
 
 Wait for an on-chain transaction to be confirmed by algod.
@@ -327,7 +335,7 @@ Confirmed transaction information dictionary from algod.
 
 **Raises**
 
-- `RuntimeError`: If `self.algod_client` is None.
+- `AlgodClientRequiredError`: (a `RuntimeError`) If `self.algod_client` is None.
 
 **Example**
 
@@ -340,4 +348,4 @@ Confirmed transaction information dictionary from algod.
 
 - `PaymentGate`: Accepts a signer to sign fee-payer and settlement transactions.
 
-<sub>Source: [ai_economy_sdk/signer.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/signer.py#L11)</sub>
+<sub>Source: [ai_economy_sdk/signer.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/signer.py#L21)</sub>

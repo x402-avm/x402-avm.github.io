@@ -36,4 +36,15 @@ Optional specific network(s) (default: wildcard).
 Server for chaining.
 </ResponseField>
 
-<sub>Source: [x402_algorand/register.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/register.py#L78)</sub>
+## Examples
+
+```python
+from x402 import x402Facilitator, x402ResourceServer
+from x402_algorand.exact import register_exact_avm_server
+
+facilitator = x402Facilitator()  # register the facilitator scheme on it too
+server = x402ResourceServer(facilitator)
+register_exact_avm_server(server)  # all Algorand networks (algorand:*)
+```
+
+<sub>Source: [x402_algorand/exact/register.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/register.py#L78)</sub>

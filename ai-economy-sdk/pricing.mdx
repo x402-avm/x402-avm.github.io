@@ -90,13 +90,13 @@ For each tool call, `PaymentGate.price_for` does the following:
 
 For every settled call the server's fee payer pays 2,000 microALGO in fees (two transactions at the 1,000 microALGO minimum). An ALGO price at or below 2,000 microALGO loses money on every call, so the gate guards against it:
 
-- A fixed price (`prices` dict or `default_price`) in `0 < price <= 2000` raises `ValueError` when the gate is created.
+- A fixed price (`prices` dict or `default_price`) in `0 < price <= 2000` raises `ConfigurationError` (a `ValueError`) when the gate is created.
 - A price that ends up in that range at call time (from a callable or after a discount) is raised to 2,001 microALGO, with a warning logged once per tool.
 - `allow_loss=True` turns both checks off, for deliberate subsidies.
 - The floor applies only when `asset_id=0`. USDC and other ASA prices are not compared with ALGO fees, although the server still pays the fees in ALGO.
 
 ```text
-ValueError: price 1000 for tool 'summarize' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True
+ai_economy_sdk.exceptions.ConfigurationError: price 1000 for tool 'summarize' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True
 ```
 
 ## Complete example
@@ -139,7 +139,7 @@ from ai_economy_sdk.chain import ChainReader
 from _localnet import ALGOD, INDEXER_URL, new_funded_account
 
 SERVER_PORT = 9202
-SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/sse"
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/mcp"
 
 TOOL_PRICES = {"compute": 6000}
 
@@ -181,7 +181,7 @@ def main() -> None:
         bulk_discount=0.5,
     )
 
-    app = gate.wrap(mcp)
+    app = gate.wrap(mcp, transport="streamable-http")
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning"))
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()

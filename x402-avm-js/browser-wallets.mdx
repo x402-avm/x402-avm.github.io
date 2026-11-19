@@ -60,10 +60,7 @@ const safeSignTxns = async (txns: Uint8Array[], indexes: number[]): Promise<(Uin
  */
 
 import { useWallet } from '@txnlab/use-wallet-react';
-import {
-  payForRequirement,
-  type PaymentRequired,
-} from 'x402-avm-js';
+import { payForRequirement, type PaymentRequired, type SpendControls } from 'x402-avm-js';
 
 /**
  * Execute an x402 payment challenge using the connected browser wallet.
@@ -77,11 +74,14 @@ import {
  *
  * @param challenge - Decoded PaymentRequired challenge from HTTP 402 response.
  * @param wallet - useWallet() hook return value.
+ * @param controls - Spend controls; without them the default cap of 1,000,000 base units applies.
+ *   Throws SpendLimitExceededError / PaymentNotAllowedError (both X402AvmError) before the wallet is asked to sign.
  * @returns Promise resolving to the base64-encoded PAYMENT-SIGNATURE header.
  */
 export async function payWithBrowserWallet(
   challenge: PaymentRequired,
-  wallet: ReturnType<typeof useWallet>
+  wallet: ReturnType<typeof useWallet>,
+  controls: SpendControls = { maxAmount: 100_000n, allowedAssets: ['0'] },
 ): Promise<string> {
   const { activeAddress, algodClient, signTransactions } = wallet;
 
@@ -114,12 +114,7 @@ export async function payWithBrowserWallet(
     return mapped;
   };
 
-  return await payForRequirement(
-    challenge,
-    activeAddress,
-    algodClient,
-    safeSignTxns
-  );
+  return await payForRequirement(challenge, activeAddress, algodClient, safeSignTxns, controls);
 }
 ```
 
@@ -130,12 +125,13 @@ export async function payWithBrowserWallet(
 ## What happens when you pay
 
 1. `payForRequirement` fetches suggested parameters from algod (`algod.getTransactionParams().do()`).
-2. It picks the `exact` offer for algod's network with `selectRequirement`, and throws if there is none.
-3. It builds the group with `buildExactAvmGroup`:
+2. It picks the `exact` offer for algod's network with `selectRequirement`, and throws `NetworkMismatchError` if there is none.
+3. It checks the offer against the spend controls: by default anything above 1,000,000 base units is refused with `SpendLimitExceededError`, before the wallet is asked to sign. See [Guardrails](/agents/guardrails#javascript-clients).
+4. It builds the group with `buildExactAvmGroup`:
    - With `extra.feePayer`: transaction 0 is the server's 0-amount self-payment with a pooled fee of twice the minimum fee (2,000 microALGO), and transaction 1 is your payment with fee 0.
    - Without it: one payment that pays the normal fee.
-4. The wallet asks the user to sign only the buyer's transaction.
-5. The signed and unsigned transactions are encoded into the `PAYMENT-SIGNATURE` header.
+5. The wallet asks the user to sign only the buyer's transaction.
+6. The signed and unsigned transactions are encoded into the `PAYMENT-SIGNATURE` header.
 
 The browser submits nothing to the chain. The server verifies the group, runs the service, and settles only if the service succeeds.
 

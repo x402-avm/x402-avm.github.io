@@ -46,13 +46,14 @@ Any wallet can buy a pass: send a payment of at least the scope's price, in the 
 
 ```python
 from algosdk import transaction
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
 
 sp = algod_client.suggested_params()
 txn = transaction.PaymentTxn(
     buyer_address, sp, vendor_address, 100_000,
     note=b"x402-pass:listing:audio-tools",
 )
-txid = algod_client.send_transaction(txn.sign(buyer_private_key))
+txid = algod_client.send_transaction(AccountTransactionSigner(buyer_private_key).sign_transactions([txn], [0])[0])
 transaction.wait_for_confirmation(algod_client, txid, 4)
 ```
 
@@ -116,7 +117,7 @@ from ai_economy_sdk.chain import ChainReader
 from _localnet import ALGOD, INDEXER_URL, new_funded_account
 
 SERVER_PORT = 9203
-SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/sse"
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/mcp"
 SCOPE = "listing:echo-1"
 PASS_PRICE = 50_000
 TOOL_PRICE = 5_000
@@ -144,7 +145,7 @@ def main() -> None:
         pass_days=30.0,
     )
 
-    app = gate.wrap(mcp)
+    app = gate.wrap(mcp, transport="streamable-http")
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning"))
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()

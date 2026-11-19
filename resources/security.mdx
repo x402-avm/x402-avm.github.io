@@ -5,6 +5,18 @@ description: "Threat model and the protections enforced by ai-economy-sdk, x402-
 
 This page lists the attacks the packages are designed to resist and where each protection is implemented. To report a vulnerability, follow the [security policy](https://github.com/x402-avm/.github/blob/main/SECURITY.md); do not open a public issue.
 
+## Unpaid tool calls
+
+**Threat.** A client reaches a priced tool without paying, for example over a transport or a path the payment gate does not inspect.
+
+**Protection.** Since ai-economy-sdk 0.5.0, the gate inspects the JSON-RPC body of every HTTP `POST`, whatever its path or transport (Streamable HTTP at `/mcp`, SSE at `/messages/`, or an app mounted under a prefix). It fails closed: `SettleOnSuccessMiddleware` refuses with `PaymentRequiredError` any priced tool call that did not pass through the gate, and refuses a call whose payment reservation has expired. JSON-RPC batches containing `tools/call` are rejected with HTTP `400`, and if `SettleOnSuccessMiddleware` was never installed the gate refuses priced calls with HTTP `500`.
+
+<Warning>
+  In ai-economy-sdk 0.4.x the gate only inspected `POST` requests whose path ended in `/messages`. A FastMCP Streamable HTTP app wrapped with `PaymentGate.middleware()` (`POST /mcp`), or a gated SSE app mounted under a path prefix, served priced tools without payment. Upgrade to 0.5.0.
+</Warning>
+
+**Where.** `_GateASGIMiddleware` and `SettleOnSuccessMiddleware` in [`ai_economy_sdk/gate.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py).
+
 ## Replayed payments
 
 **Threat.** A client or an eavesdropper sends the same signed payment several times to get several calls for one payment.
@@ -25,7 +37,7 @@ This page lists the attacks the packages are designed to resist and where each p
 
 **Threat.** A group includes a close-out (`close_remainder_to`, `asset_close_to`) that empties an account, a rekey that hands control of an account to an attacker, or a key registration.
 
-**Protection.** Before signing anything, the facilitator rejects any transaction with a close-out field (`..._close_to_detected`), any key registration (`..._blocked_transaction_type`), and any rekey that is not undone within the same group (`..._rekey_detected`).
+**Protection.** Before signing anything, the facilitator rejects any transaction with a close-out field (`..._close_to_detected`), any key registration (`..._blocked_transaction_type`), and any rekey that is not part of a balanced pair returning authority to the sender within the same group (`..._rekey_detected`).
 
 **Where.** `validate_no_security_risks` and `validate_rekey_operations` in [`x402_algorand/utils.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py).
 
@@ -33,7 +45,7 @@ This page lists the attacks the packages are designed to resist and where each p
 
 **Threat.** A crafted group makes the server's fee payer pay large fees, send funds, or act as the buyer.
 
-**Protection.** The fee payer transaction must be a `pay` from the fee payer to itself, with amount 0, no close-out, no rekey, and a fee of at most 16,000 microALGO. The facilitator only signs for addresses it manages, and it rejects any payment whose sender is one of its own addresses (`..._fee_payer_transferring_funds`). On the business side, `PaymentGate` refuses ALGO prices that do not cover the 2,000 microALGO the fee payer spends per call, unless `allow_loss=True`.
+**Protection.** Every transaction sent by one of the facilitator's addresses must be a `pay` from that address to itself, with amount 0, no close-out, no rekey, and a fee of at most 16,000 microALGO; the advertised fee payer's transactions are signed only after these checks. The facilitator only signs for addresses it manages, and it rejects any payment whose sender is one of its own addresses (`..._fee_payer_transferring_funds`). On the business side, `PaymentGate` refuses ALGO prices that do not cover the 2,000 microALGO the fee payer spends per call, unless `allow_loss=True`.
 
 **Where.** `validate_fee_payer_transaction` in [`x402_algorand/utils.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py); the fee floor in [`ai_economy_sdk/gate.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py).
 
@@ -41,7 +53,7 @@ This page lists the attacks the packages are designed to resist and where each p
 
 **Threat.** A client pays less than the price, pays someone else, or pays in another asset.
 
-**Protection.** The receiver must equal `payTo` (`..._recipient_mismatch`), the amount must equal the required amount exactly (`..._amount_insufficient`), and the asset must match (`..._asset_id_mismatch`). The buyer's Ed25519 signature is verified against the sender's public key (`..._invalid_signature`), so the transaction cannot be altered after signing. Finally, the group is simulated on algod, which catches insufficient balances and missing opt-ins.
+**Protection.** The receiver must equal `payTo` (`..._recipient_mismatch`), the amount must equal the required amount exactly (`..._amount_insufficient`), and the asset must match (`..._asset_id_mismatch`). The buyer's authorization is verified (`..._invalid_signature`): an Ed25519 signature by the sender or by its auth address (rekeyed account), a k-of-n multisig, or a logic signature, as the exact scheme specification allows. The transaction cannot be altered after signing. Finally, the group is simulated on algod, which catches insufficient balances and missing opt-ins.
 
 **Where.** [`x402_algorand/exact/facilitator.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/facilitator.py).
 
@@ -57,15 +69,17 @@ This page lists the attacks the packages are designed to resist and where each p
 
 **Threat.** A malicious or mispriced server asks a client, often an unattended agent, for more than intended.
 
-**Protection.** The official `x402` client enforces spend controls before signing: only known assets (ALGO, and USDC on MainNet and TestNet) up to `$1` per payment by default. `paid_mcp_session` exposes them as `spend_controls`. `x402-avm-js` has no spend controls; check offers in your code. See [Guardrails](/agents/guardrails).
+**Protection.** Both clients check the server's offer before anything is signed. The official `x402` Python client enforces spend controls: only known assets (ALGO, and USDC on MainNet and TestNet) up to `$1` per payment by default; `paid_mcp_session` exposes them as `spend_controls`. Since 0.4.0, `x402-avm-js` refuses any payment above 1,000,000 base units (1 ALGO or 1 USDC) with `SpendLimitExceededError`, and can restrict assets, networks and recipients (`maxAmount`, `allowedAssets`, `allowedNetworks`, `allowedPayTo`). See [Guardrails](/agents/guardrails).
+
+**Where.** `checkSpendControls` in [`x402-avm-js/src/index.ts`](https://github.com/x402-avm/x402-avm-js/blob/main/src/index.ts).
 
 ## Key handling
 
 **Threat.** Private keys leak from a client or server.
 
-**Protection.** Clients send only signed transactions; keys never leave the signer. On the server, `DefaultAvmSigner` holds the fee payer key in memory and signs only the indexes it is asked to sign, which the facilitator restricts to the validated fee payer transaction. Load keys from the environment or a secret manager, keep the fee payer separate from the revenue account, and keep only working capital in it.
+**Protection.** Clients send only signed transactions; keys never leave the signer. On the server, `DefaultAvmSigner` (ai-economy-sdk) and `ServerAvmSigner` (x402-algorand) hold the fee payer key in memory and sign only the indexes they are asked to sign, which the facilitator restricts to the validated fee payer transactions. The keys are kept in private attributes and are not shown by `repr()`, which shows only the address; `ServerAvmSigner` and `PayerAvmSigner` also keep them out of exception messages and logs. To use a KMS, HSM or wallet, implement the `ClientAvmSigner` / `FacilitatorAvmSigner` protocols instead. Load keys from the environment or a secret manager, keep the fee payer separate from the revenue account, and keep only working capital in it.
 
-**Where.** [`ai_economy_sdk/signer.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/signer.py).
+**Where.** [`ai_economy_sdk/signer.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/signer.py), [`x402_algorand/signer.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/signer.py).
 
 ## Stolen or replayed identity proofs
 

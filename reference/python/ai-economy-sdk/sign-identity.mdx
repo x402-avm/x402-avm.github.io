@@ -19,6 +19,13 @@ Signs the ASCII message `x402-identity:<sender_address>:<timestamp>` using Ed255
 and returns the three legacy headers `x-sender-address`, `x-sender-timestamp`,
 and `x-sender-signature`.
 
+**Notes**
+
+.. deprecated:: 0.5.0
+   Use :func:`sign_identity_txn`, whose proof is bound to one network's genesis
+   hash. `sign_identity` keeps working and servers keep accepting its headers;
+   it emits a `DeprecationWarning` and will be removed in a future major release.
+
 ## Parameters
 
 <ParamField body="private_key" type="str" required>
@@ -39,10 +46,13 @@ and `x-sender-signature` (base64-encoded signature).
 ## Examples
 
 ```python
+>>> import warnings
 >>> from algosdk import account
 >>> from ai_economy_sdk.identity import sign_identity
 >>> sk, addr = account.generate_account()
->>> hdrs = sign_identity(sk, now=1700000000)
+>>> with warnings.catch_warnings():
+...     warnings.simplefilter("ignore", DeprecationWarning)
+...     hdrs = sign_identity(sk, now=1700000000)
 >>> hdrs["x-sender-address"] == addr
 True
 >>> hdrs["x-sender-timestamp"]
@@ -56,4 +66,4 @@ True
 - `sign_identity_txn`: Preferred modern transaction-based proof.
 - `verify_identity`: Validates both modern and legacy identity headers.
 
-<sub>Source: [ai_economy_sdk/identity.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/identity.py#L299)</sub>
+<sub>Source: [ai_economy_sdk/identity.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/identity.py#L321)</sub>

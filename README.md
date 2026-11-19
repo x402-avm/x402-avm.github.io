@@ -64,8 +64,8 @@ python3 scripts/gen_js_reference.py --source ../x402-avm-js/src/index.ts
 npx -y mint@4.3.63 broken-links
 ```
 
-- `gen_python_reference.py` writes one page per public object (listed in its `PACKAGES` table) under `reference/python/<package>/`, an overview page per package, and updates the `ai-economy-sdk` and `x402-algorand` groups of the "API reference" tab in `docs.json`. To document a new public object, add it to `PACKAGES`.
-- `gen_js_reference.py` writes one page per documented export of `src/index.ts` under `reference/js/` and updates the `x402-avm-js` group. It fails if an export has no TSDoc or is missing from its `CATEGORIES` table. Interface property descriptions come from `scripts/js_reference_overlay.json`.
+- `gen_python_reference.py` writes one page per public object (listed in its `PACKAGES` table) under `reference/python/<package>/`, an overview page per package, and updates the `ai-economy-sdk` and `x402-algorand` groups of the "API reference" tab in `docs.json`. To document a new public object, add it to `PACKAGES`. Objects whose docstring has no Examples section can get one from `scripts/python_reference_examples.json`; keep those examples runnable.
+- `gen_js_reference.py` writes one page per documented export of `src/index.ts` and `src/errors.ts` under `reference/js/` and updates the `x402-avm-js` group. It fails if an export has no TSDoc or is missing from its `CATEGORIES` table. Interface property descriptions come from `scripts/js_reference_overlay.json`.
 
 ## Refresh the inlined examples
 

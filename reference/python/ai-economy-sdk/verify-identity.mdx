@@ -54,10 +54,11 @@ or None if invalid or missing headers. Never raises exceptions.
 
 ```python
 >>> from algosdk import account
->>> from ai_economy_sdk.identity import sign_identity, verify_identity
+>>> from ai_economy_sdk.identity import sign_identity_txn, verify_identity
 >>> sk, addr = account.generate_account()
->>> hdrs = sign_identity(sk)
->>> verify_identity(hdrs) == addr
+>>> gh = "wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="
+>>> hdrs = sign_identity_txn(sk, gh)
+>>> verify_identity(hdrs, genesis_hash_b64=gh) == addr
 True
 >>> verify_identity({}) is None
 True
@@ -68,4 +69,4 @@ True
 - `verify_identity_txn`: Specific verification for the X-Identity-Txn format.
 - `sign_identity`: Client-side helper for legacy identity headers.
 
-<sub>Source: [ai_economy_sdk/identity.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/identity.py#L348)</sub>
+<sub>Source: [ai_economy_sdk/identity.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/identity.py#L391)</sub>

@@ -26,12 +26,22 @@ If not provided, the client pays their own fees.
 The scheme identifier ("exact").
 </ResponseField>
 
+## Examples
+
+```python
+from x402_algorand.exact import ExactAvmServerScheme
+
+scheme = ExactAvmServerScheme()
+price = scheme.parse_price({"amount": "10000", "asset": "0"}, "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k")
+print(price.amount, price.asset)  # 10000 0
+```
+
 ## Methods
 
 ### `register_money_parser`
 
 ```python
-def register_money_parser(parser: MoneyParser) -> 'ExactAvmScheme'
+def register_money_parser(parser: MoneyParser) -> ExactAvmScheme
 ```
 
 Register custom money parser in the parser chain.
@@ -47,7 +57,7 @@ Custom function to convert amount to AssetAmount.
 
 **Returns**
 
-<ResponseField name="returns" type="'ExactAvmScheme'">
+<ResponseField name="returns" type="ExactAvmScheme">
 Self for chaining.
 </ResponseField>
 
@@ -140,4 +150,4 @@ ASA ID as string.
 Asset info with name, decimals, asa_id.
 </ResponseField>
 
-<sub>Source: [x402_algorand/server.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/server.py#L29)</sub>
+<sub>Source: [x402_algorand/exact/server.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/server.py#L33)</sub>

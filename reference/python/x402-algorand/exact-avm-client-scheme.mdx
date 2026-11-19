@@ -40,6 +40,24 @@ Creates atomic transaction groups for ASA payments:
 The scheme identifier ("exact").
 </ResponseField>
 
+## Examples
+
+```python
+import os
+
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import ExactAvmClientScheme
+
+scheme = ExactAvmClientScheme(
+    PayerAvmSigner.from_mnemonic(os.environ["PAYER_MNEMONIC"]),
+    algod_url="http://localhost:4001",
+    algod_token="a" * 64,
+)
+# Usually registered with register_exact_avm_client(); called directly it returns
+# the inner payload {"paymentGroup": [...], "paymentIndex": 1} for a requirement:
+# inner = scheme.create_payment_payload(requirements)
+```
+
 ## Methods
 
 ### `create_payment_payload`
@@ -75,7 +93,8 @@ x402Client wraps this with x402_version, accepted, resource, extensions.
 
 **Raises**
 
-- `ValueError`: If network is unsupported.
+- `NetworkError`: If the network is unsupported and no `algod_url` was given.
+- `NetworkMismatchError`: If algod is connected to a different network than `requirements.network`.
 
 ### `find_default_asset`
 
@@ -108,4 +127,4 @@ CAIP-2 or legacy V1 network identifier.
 Matching default asset dict or None.
 </ResponseField>
 
-<sub>Source: [x402_algorand/client.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/client.py#L34)</sub>
+<sub>Source: [x402_algorand/exact/client.py](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/client.py#L27)</sub>

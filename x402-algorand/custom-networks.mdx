@@ -50,7 +50,7 @@ Without URLs, the network is registered with `http://localhost:4001` and `http:/
 
 ### normalize_network
 
-Turns x402 v1 network names and legacy 44-character ids into short CAIP-2 ids, and returns valid short ids unchanged. Any other input raises `ValueError`.
+Turns x402 v1 network names and legacy 44-character ids into short CAIP-2 ids, and returns valid short ids unchanged. Any other input raises `NetworkError` (a `ValueError`).
 
 ```python
 from x402_algorand.utils import normalize_network
@@ -82,7 +82,7 @@ More utilities, such as `get_network_config` and `network_from_genesis_hash`, ar
 
 Both sides check that a payment belongs to the requirement's network:
 
-- **Client.** `create_payment_payload` compares the genesis hash of its algod's suggested parameters with the requirement's network. If they differ it raises, for example: `ValueError: algod is on algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY but the payment is for algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe`.
+- **Client.** `create_payment_payload` compares the genesis hash of its algod's suggested parameters with the requirement's network. If they differ it raises `NetworkMismatchError` (a `ValueError`), for example: `NetworkMismatchError: algod is on algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY but the payment is for algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe`.
 - **Facilitator.** `verify()` derives the CAIP-2 id from each transaction's genesis hash. If it differs from the requirement's network, verification fails with `invalid_exact_avm_payload_genesis_hash_mismatch`.
 
 ## Simulate on public networks

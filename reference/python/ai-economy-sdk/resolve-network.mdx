@@ -40,7 +40,7 @@ Canonical short CAIP-2 network identifier (e.g. `"algorand:wGHE2Pwdvd7S12BL5FaOP
 
 ## Raises
 
-- `ValueError`: If the network name cannot be resolved or is invalid.
+- `UnknownNetworkError`: (a `ValueError`) If the network name cannot be resolved or is invalid.
 
 ## Examples
 
@@ -59,4 +59,4 @@ True
 - `endpoints_for`: Resolves connection endpoints for the network.
 - `genesis_hash_for`: Returns the full 44-character base64 genesis hash.
 
-<sub>Source: [ai_economy_sdk/network.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/network.py#L118)</sub>
+<sub>Source: [ai_economy_sdk/network.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/network.py#L126)</sub>

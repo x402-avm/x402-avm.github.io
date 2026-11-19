@@ -5,48 +5,110 @@ description: "Notable changes to ai-economy-sdk, x402-algorand and x402-avm-js, 
 
 This page combines the changelogs of the three packages: [ai-economy-sdk](https://github.com/x402-avm/ai-economy-sdk/blob/main/CHANGELOG.md), [x402-algorand](https://github.com/x402-avm/x402-algorand/blob/main/CHANGELOG.md) and [x402-avm-js](https://github.com/x402-avm/x402-avm-js/blob/main/CHANGELOG.md).
 
-<Update label="2026-11-19" description="ai-economy-sdk 0.4.1, x402-algorand 0.2.1, x402-avm-js 0.3.1" tags={["Python", "JavaScript", "Metadata"]}>
+<Update label="2026-11-19 (minor releases)" description="ai-economy-sdk 0.5.0, x402-algorand 0.3.0, x402-avm-js 0.4.0" tags={["Python", "JavaScript", "Security"]}>
+  <Warning>
+    **Security: upgrade ai-economy-sdk to 0.5.0.** In 0.4.x the payment gate only inspected `POST` requests whose path ended in `/messages`. A FastMCP Streamable HTTP app wrapped with `PaymentGate.middleware()` (`POST /mcp`), or a gated SSE app mounted under a path prefix, passed priced `tools/call` requests to the server **without a payment**.
+  </Warning>
+
+  ## Security
+
+  **ai-economy-sdk 0.5.0**
+
+  - The gate inspects the JSON-RPC body of every HTTP `POST`, whatever its path or transport, and its route table matches every path.
+  - Fails closed: `SettleOnSuccessMiddleware` refuses (with `PaymentRequiredError`) any priced tool call that did not pass through the HTTP gate. A gated call whose payment reservation has expired is refused instead of being served without settlement. JSON-RPC batches containing `tools/call` are rejected with HTTP 400, and the HTTP middleware refuses priced calls with HTTP 500 if `SettleOnSuccessMiddleware` was never installed.
+  - `subscription_issuer` can no longer be silently ignored: the issuer is always passed to `chain.has_active_subscription()`, and `PaymentGate` raises `ConfigurationError` at construction if that method has no `issuer` parameter.
+  - `DefaultAvmSigner` no longer stores the key in a public attribute, and its `repr()` shows only the address.
+
+  **x402-avm-js 0.4.0**
+
+  - Client-side spend limits protect against a server requesting an unexpectedly large amount (see Breaking below).
+
+  ## Breaking and changed
+
+  **x402-avm-js 0.4.0**
+
+  - **Default spend cap.** `payForRequirement` and `buildExactAvmGroup` refuse any payment above 1,000,000 base units (1 ALGO, or 1 USDC) with a `SpendLimitExceededError`, before anything is signed. To pay more, pass the new options argument, for example `payForRequirement(challenge, address, algod, signer, { maxAmount: 5_000_000n })`; `maxAmount: Infinity` removes the cap.
+  - Node.js 18 is no longer supported; the package requires Node.js 20 or later.
+  - Types: `extra` and `extensions` values are `unknown` instead of `any`; `selectRequirement`, `encodePaymentHeader` and `payForRequirement` take `PaymentRequired` instead of `PaymentRequired | any`.
+  - `decodePaymentRequired` validates the decoded shape and throws `InvalidPaymentRequiredError` (it used to return whatever JSON it found).
+  - `src/` is published in the package, so source maps and go-to-definition resolve.
+
+  **ai-economy-sdk 0.5.0**
+
+  - `PaymentGate.wrap()` without `transport=` still serves SSE but emits a `FutureWarning`; the default will change to `"streamable-http"` in a future release.
+  - The SSE compatibility patch (stateless MCP sessions, so raw JSON-RPC clients can call tools without the `initialize` handshake) is applied only for the SSE transport. Correction to the 0.4.0 entry "Removed monkeypatches": this FastMCP patch was still present in 0.4.0 and 0.4.1.
+  - **Potentially breaking:** `AIEconomySDK.add_tool()` decides once, from the pricing function's signature, whether to call it as `(args, sender)` or `(args)`; a function accepting neither raises `ConfigurationError` at registration (0.4.x failed per request).
+  - **Potentially breaking:** `ChainReader` and `PaymentGate` catch only lookup errors (algod/indexer HTTP errors, connection errors, malformed responses), log them and report no usage, subscription or pass, as before. Other exceptions now propagate.
+  - **Potentially breaking:** `DefaultAvmSigner.private_key` is a read-only property; assigning to it raises `AttributeError`.
+  - On the SSE transport the `POST` response is the server's own response plus settlement headers.
+  - Signing uses `AccountTransactionSigner` instead of the deprecated `Transaction.sign()`.
+  - Requires `x402-algorand>=0.2.1`.
+
+  **x402-algorand 0.3.0**
+
+  - Errors for unsupported or unregistered networks are `NetworkError`, for an algod on the wrong network `NetworkMismatchError`, and for undecodable transactions `TransactionDecodeError`. All are subclasses of `ValueError`, as before.
+  - The facilitator checks every transaction sent by one of its own addresses (not only the first), and signs all of the advertised `feePayer`'s transactions, as the specification requires.
+  - Fee payer signing, simulation and settlement failures are also logged to the `x402_algorand` logger; the returned `invalid_reason` / `error_reason` codes are unchanged.
+  - `settle()` returns the ID of `paymentGroup[paymentIndex]` as the transaction, as required by the specification; with a fee payer it previously returned the ID of the fee payer transaction.
+  - The V1 facilitator and client wrappers accept the official SDK's `PaymentPayloadV1` / `PaymentRequirementsV1` models and return `VerifyResponse` / `SettleResponse`, so V1 payments routed through `x402Facilitator` / `x402Client` work. Requirements without `extra` no longer fail validation.
+  - Ed25519 signature verification of a payment from a rekeyed account uses the auth address. A rekey pair is only accepted when the second rekey returns authority to the sender.
+  - `pynacl` is a declared dependency (it was already required through `py-algorand-sdk`).
+
+  ## Added
+
+  **ai-economy-sdk 0.5.0**
+
+  - Streamable HTTP support: `PaymentGate.wrap(mcp, transport="streamable-http")` (alias `"http"`) serves the MCP Streamable HTTP transport at `POST /mcp`, stateless by default (`stateless_http=False` enables MCP sessions). `wrap()` also accepts `path=` and other `FastMCP.http_app()` keyword arguments. `AIEconomySDK.build_app(transport=...)` forwards to it.
+  - `paid_mcp_session(..., transport=...)` connects over Streamable HTTP or SSE. Without `transport=`, URLs whose path ends in `/mcp` use Streamable HTTP and all others use SSE.
+  - Exception hierarchy, exported from the package: `AIEconomyError`, `ConfigurationError` (a `ValueError`), `UnknownNetworkError`, `AlgodClientRequiredError` (also a `RuntimeError`), `PaymentVerificationError` (a `RuntimeError`), `PaymentRequiredError` and `SettlementError` (FastMCP `ToolError`s). Each also subclasses the type raised at the same place in 0.4.x. See [Errors and error codes](/resources/error-codes#ai-economy-sdk-exceptions).
+  - Typing module `ai_economy_sdk.types` (`ServerSigner`, `ChainLookup`, `Prices`, `GatePriceFunction`, `ToolPriceFunction`, `SpendControlsArg`, `Transport`), and a `py.typed` marker.
+  - `ai_economy_sdk.__version__`.
+  - `SettleOnSuccessMiddleware` is exported for apps that build the FastMCP HTTP app themselves.
+  - Logging to the `ai_economy_sdk` logger: refused calls, settlement failures, expired reservations and failed chain lookups at `WARNING`.
+  - Python 3.14 support.
+
+  **x402-algorand 0.3.0**
+
+  - Ready-made signers: `PayerAvmSigner` (client side) and `ServerAvmSigner` (facilitator side: fee payer signing, simulate, send, confirm; also usable as a client signer), built with `from_private_key(...)` or `from_mnemonic(...)`. `ServerAvmSigner` accepts several keys, an `algod_client` or `algod_url`/`algod_token`, and checks that algod is on the requested network. Keys are never included in `repr()`, error messages or logs.
+  - Exception hierarchy in `x402_algorand.errors`, exported from `x402_algorand`: `X402AlgorandError`, `NetworkError`, `NetworkMismatchError`, `TransactionDecodeError`, `SigningError`, `SimulationError`.
+  - Payments authorized by a k-of-n multisig, a logic signature, or the auth address of a rekeyed account are accepted, as allowed by the exact scheme specification.
+  - `x402_algorand.__version__`, a `py.typed` marker, and Python 3.14 support.
+
+  **x402-avm-js 0.4.0**
+
+  - Spend controls: `maxAmount` (per payment, or per asset), `allowedAssets`, `allowedNetworks`, `allowedPayTo`; exported `SpendControls`, `DEFAULT_MAX_AMOUNT`, `checkSpendControls`. See [Guardrails](/agents/guardrails#javascript-clients).
+  - Typed errors, all extending `X402AvmError` with a stable `code`: `SpendLimitExceededError`, `PaymentNotAllowedError`, `InvalidPaymentRequiredError`, `NoSupportedRequirementError`, `NetworkMismatchError`, `UnknownNetworkError`, `InvalidOptionsError`.
+  - `parsePaymentRequired(value: unknown)` for validating untrusted input.
+  - `buildExactAvmGroup` rejects requirements whose `extra.genesisHash` or `extra.genesisId` disagrees with the algod parameters, and malformed `payTo`, `feePayer`, `amount` and `asset` values.
+
+  ## Deprecated
+
+  **ai-economy-sdk 0.5.0**
+
+  - `sign_identity()` (legacy `x-sender-*` headers): use `sign_identity_txn()`, which binds the proof to one network. It still works and emits a `DeprecationWarning`; servers keep accepting legacy headers, and `paid_mcp_session` still sends them.
+  - Reading `DefaultAvmSigner.private_key` emits a `DeprecationWarning`. Keep your own reference to the key.
+
+  ## Fixed
+
+  **ai-economy-sdk 0.5.0**
+
+  - A `TypeError` raised inside a two-argument pricing function was caught and the function was called again with one argument.
+</Update>
+
+<Update label="2026-11-19 (patch releases)" description="ai-economy-sdk 0.4.1, x402-algorand 0.2.1, x402-avm-js 0.3.1" tags={["Python", "JavaScript", "Metadata"]}>
   ## ai-economy-sdk 0.4.1
 
-  **Added**
-
-  - Project URLs (`Homepage`, `Documentation`, `Repository`, `Issues`, `Changelog`), PyPI classifiers, and dev optional dependencies (`pytest`, `pytest-asyncio`, `ruff`, `build`, `twine`) in `pyproject.toml`.
-  - Self-contained LocalNet test infrastructure in `tests/conftest.py` with dynamic KMD dispenser funding, ephemeral account creation, and dynamic asset generation, removing external file and private path dependencies.
-  - Public repository documentation and metadata: comprehensive `README.md` with working FastMCP quickstart, `AGENTS.md` coding agent specification, `ruff.toml`, `.editorconfig`, GitHub Actions CI pipeline, and Dependabot weekly updates with PR grouping.
-
-  **Changed**
-
-  - Code formatted with Ruff (`ruff check` and `ruff format`) for standard import ordering and styling without behavioral changes.
-  - Dependency policy: Kept stable ranges `fastmcp>=3.4,<4` and `mcp>=1.29,<2`; major versions `mcp 2.x` and `fastmcp 4.x` are pinned/ignored in Dependabot configuration due to upstream `httpx2` breaking changes affecting `x402` compatibility.
+  - Project URLs (`Homepage`, `Documentation`, `Repository`, `Issues`, `Changelog`) and PyPI classifiers in `pyproject.toml`.
+  - Dependency ranges kept at `fastmcp>=3.4,<4` and `mcp>=1.29,<2`: `mcp` 2.x and `fastmcp` 4.x are excluded because of upstream `httpx` changes that affect `x402` compatibility.
 
   ## x402-algorand 0.2.1
 
-  **Added**
-
   - Project URLs (`Homepage`, `Documentation`, `Issues`, `Changelog`) and classifiers (Python 3.10–3.13, `Typing :: Typed`, `Development Status :: 4 - Beta`) in `pyproject.toml`.
-  - `dev` optional dependencies extra in `pyproject.toml` (`pytest`, `pytest-asyncio`, `ruff`, `build`, `twine`, `httpx`).
-  - Public network simulation tests in `tests/test_public_networks.py` covering ALGO and USDC on TestNet and MainNet (`PUBLIC_NETS=1`).
-  - Public documentation and agent guidance: comprehensive `README.md` and `AGENTS.md`.
-  - Tooling and CI configurations: `ruff.toml`, `.gitignore`, `.editorconfig`, `.github/workflows/ci.yml`, and `.github/dependabot.yml` with ecosystem update groups.
-
-  **Changed**
-
-  - Made LocalNet tests (`tests/test_localnet_algo_payment.py`, `tests/test_spend_controls.py`, `tests/conftest.py`) self-contained by generating and funding ephemeral test accounts directly from the LocalNet KMD dispenser.
-  - Applied code formatting with `ruff` across package and tests with no behavior changes.
 
   ## x402-avm-js 0.3.1
 
-  **Added**
-
-  - Repository and package metadata: repository, homepage, bugs URL, keywords, and author.
-  - Self-contained LocalNet golden test suite with dynamic KMD dispenser funding and dynamic ASA lifecycle testing.
-  - Documentation and repository standards: README.md, AGENTS.md, .gitignore, and .editorconfig.
-  - Dependabot configuration grouping minor/patch updates and pinning vitest to 3.x for Node 18/20 runtime compatibility.
-
-  **Changed**
-
-  - Updated devDependencies: upgraded TypeScript to 7.0.2.
-  - Hardened timestamp generator `getNs()` to safely access `globalThis.process` across browser, edge, and Node.js environments.
+  - Package metadata: repository, homepage, bugs URL, keywords and author.
+  - The timestamp helper `getNs()` reads `globalThis.process` safely, so it works in browser, edge and Node.js environments.
 </Update>
 
 <Update label="2026-11-18" description="ai-economy-sdk 0.4.0, x402-algorand 0.2.0, x402-avm-js 0.3.0, and earlier 0.2/0.3 releases" tags={["Python", "JavaScript", "Licensing"]}>

@@ -4,10 +4,10 @@ sidebarTitle: "Overview"
 description: "Turn an MCP server into a paid service: every tool call is paid with an x402 payment on Algorand."
 ---
 
-`ai-economy-sdk` (PyPI, MIT, version 0.4.1) adds per-call payments to [Model Context Protocol](https://modelcontextprotocol.io) servers built with FastMCP, and gives Python clients and agents a session that pays for tool calls automatically.
+`ai-economy-sdk` (PyPI, MIT, version 0.5.0) adds per-call payments to [Model Context Protocol](https://modelcontextprotocol.io) servers built with FastMCP, and gives Python clients and agents a session that pays for tool calls automatically.
 
 ```bash
-pip install ai-economy-sdk==0.4.1
+pip install ai-economy-sdk==0.5.0
 ```
 
 ## What it provides
@@ -33,7 +33,7 @@ sequenceDiagram
     participant Gate as PaymentGate + FastMCP
     participant Chain as Algorand (algod)
 
-    Client->>Gate: tools/call over MCP (SSE)
+    Client->>Gate: tools/call over MCP (Streamable HTTP or SSE)
     Gate-->>Client: 402 Payment Required (x402 requirements)
     Client->>Client: Build the atomic group, sign the buyer transaction
     Client->>Gate: Retry with PAYMENT-SIGNATURE
@@ -49,10 +49,12 @@ sequenceDiagram
     end
 ```
 
-`gate.wrap(mcp)` returns an ASGI application with two layers:
+`gate.wrap(mcp, transport="streamable-http")` returns an ASGI application with two layers:
 
-- **`GateMiddleware`** (Starlette): leaves `GET /sse` open, inspects `POST /messages*` requests, prices `tools/call` requests and answers `402` when payment is due.
-- **`SettleOnSuccessMiddleware`** (FastMCP): runs the tool first and settles the payment only if the tool completes without error.
+- **The gate's ASGI middleware** (Starlette): inspects the JSON-RPC body of every HTTP `POST`, whatever its path or transport, prices `tools/call` requests and answers `402` when payment is due. Other requests pass through.
+- **`SettleOnSuccessMiddleware`** (FastMCP): runs the tool first and settles the payment only if the tool completes without error. It also refuses, with `PaymentRequiredError`, any priced tool call that did not pass through the gate, so the server fails closed.
+
+`transport="streamable-http"` (alias `"http"`) serves `POST /mcp` and is the recommended transport. `transport="sse"` serves the legacy HTTP+SSE transport (`GET /sse`, `POST /messages/`) for clients that have not moved to Streamable HTTP. See [Transports](/ai-economy-sdk/server#transports).
 
 ## Minimal example
 
@@ -73,7 +75,7 @@ gate = PaymentGate(
     pay_to=server_addr,
     default_price=5_000,  # microALGO per call
 )
-app = gate.wrap(mcp)
+app = gate.wrap(mcp, transport="streamable-http")  # POST /mcp
 ```
 
 ```python client.py
@@ -81,7 +83,7 @@ import asyncio
 from ai_economy_sdk import paid_mcp_session
 
 async def main():
-    async with paid_mcp_session("http://127.0.0.1:8000/sse", buyer_sk, "localnet") as session:
+    async with paid_mcp_session("http://127.0.0.1:8000/mcp", buyer_sk, "localnet") as session:
         result = await session.call_tool("get_forecast", {"city": "London"})
         print(result.content[0].text)
 
@@ -90,6 +92,17 @@ asyncio.run(main())
 </CodeGroup>
 
 The [Quickstart](/quickstart) runs this end to end on LocalNet.
+
+## Upgrading to 0.5
+
+0.5.0 is a security release: in 0.4.x, the gate did not cover the Streamable HTTP transport or SSE apps mounted under a path prefix, so priced tools could be called without paying there. Upgrade, then:
+
+- Pass `transport=` to `wrap()` explicitly. `"streamable-http"` is recommended; without `transport=`, `wrap()` still serves SSE and emits a `FutureWarning`.
+- Point clients at the transport you serve: `paid_mcp_session` uses Streamable HTTP for URLs whose path ends in `/mcp`, and SSE for other URLs (or pass `transport=`).
+- Errors now have their own classes (see [Errors and error codes](/resources/error-codes#ai-economy-sdk-exceptions)). Each still subclasses the type raised in 0.4.x, so existing `except ValueError` / `except RuntimeError` / `except ToolError` handlers keep working.
+- A pricing function that accepts neither `(args, sender)` nor `(args)` now raises `ConfigurationError` when the tool is registered with `AIEconomySDK.add_tool()`, instead of failing per request.
+- `ChainReader` and `PaymentGate` still treat failed indexer and algod lookups as "no usage, subscription or pass", but other exceptions now propagate.
+- `DefaultAvmSigner.private_key` is read-only and deprecated; keep your own reference to the key. `sign_identity()` is deprecated in favour of `sign_identity_txn()`.
 
 ## Migrating from 0.3
 

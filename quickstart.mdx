@@ -10,7 +10,7 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
 ## Prerequisites
 
 - Python 3.10 or newer
-- Node.js 18 or newer (for the JavaScript step)
+- Node.js 20 or newer (for the JavaScript step)
 - [AlgoKit](https://github.com/algorandfoundation/algokit-cli) and Docker, to run LocalNet
 
 <Steps>
@@ -30,10 +30,10 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     npm install
     ```
 
-    `requirements.txt` pins `ai-economy-sdk==0.4.1` and `x402-algorand==0.2.1` (which bring the official `x402` package, FastMCP and `py-algorand-sdk`), plus FastAPI, Flask and uvicorn for the HTTP examples. `npm install` installs `x402-avm-js` and `algosdk` for the JavaScript examples.
+    `requirements.txt` pins `ai-economy-sdk==0.5.0` and `x402-algorand==0.3.0` (which bring the official `x402` package, FastMCP and `py-algorand-sdk`), plus FastAPI, Flask and uvicorn for the HTTP examples. `npm install` installs `x402-avm-js` and `algosdk` for the JavaScript examples.
   </Step>
   <Step title="Run the paid MCP server">
-    The server funds a fresh account with 10 ALGO, wraps a FastMCP server with `PaymentGate`, and prices `echo` at 5,000 microALGO.
+    The server funds a fresh account with 10 ALGO, wraps a FastMCP server with `PaymentGate`, prices `echo` at 5,000 microALGO, and serves the MCP Streamable HTTP transport (`POST /mcp`).
 
     {/* example: localnet/quickstart_server.py */}
 
@@ -41,7 +41,7 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     """FastMCP server payment-gated with ai-economy-sdk on Algorand LocalNet.
 
     Runs a FastMCP server with a single paid 'echo' tool priced at 5,000 microALGO.
-    Funds a server account from LocalNet dispenser and serves SSE requests on port 9201.
+    Funds a server account from LocalNet dispenser and serves Streamable HTTP (/mcp) on port 9201.
 
     How to run:
         python localnet/quickstart_server.py
@@ -83,7 +83,7 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
             prices={"echo": TOOL_PRICE_MICROALGO},
         )
 
-        app = gate.wrap(mcp)
+        app = gate.wrap(mcp, transport="streamable-http")
         uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning")
 
 
@@ -99,13 +99,17 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     python localnet/quickstart_server.py
     ```
 
-    It prints the address that receives payments and serves SSE on port 9201:
+    It prints the address that receives payments and serves `http://127.0.0.1:9201/mcp`:
 
     ```text
     pay_to: GL4IOGTXMILQYI2UOSYORNW4LHB4SULTDRYCA4AMFQUGKTEYN3ZUDQG6XE
     ```
 
     The address is different on every run.
+
+    <Note>
+      `gate.wrap(mcp, transport="streamable-http")` is the recommended transport. Pass `transport="sse"` only for MCP clients that still speak the legacy HTTP+SSE transport (`GET /sse` and `POST /messages/`). Calling `wrap(mcp)` without `transport=` still serves SSE, as 0.4 did, and emits a `FutureWarning`: the default will change to Streamable HTTP in a later release. See [Transports](/ai-economy-sdk/server#transports).
+    </Note>
   </Step>
   <Step title="Call the tool from Python">
     In a second terminal, run the client. It funds a buyer with 5 ALGO, opens a paid session, calls `echo`, and measures the buyer's balance before and after.
@@ -116,7 +120,7 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     """Paid MCP client session using ai-economy-sdk on Algorand LocalNet.
 
     Funds a fresh buyer account via the LocalNet dispenser, establishes a paid MCP
-    session to http://127.0.0.1:9201/sse, calls the 'echo' tool, and verifies the on-chain
+    session to http://127.0.0.1:9201/mcp, calls the 'echo' tool, and verifies the on-chain
     charge.
 
     How to run:
@@ -133,20 +137,22 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-    from ai_economy_sdk import paid_mcp_session
+    from ai_economy_sdk import AIEconomyError, paid_mcp_session
     from _localnet import ALGOD, new_funded_account
 
-    SERVER_URL = "http://127.0.0.1:9201/sse"
+    SERVER_URL = "http://127.0.0.1:9201/mcp"
 
 
     async def main() -> None:
         buyer_sk, buyer_addr = new_funded_account(algos=5)
         before_balance = ALGOD.account_info(buyer_addr)["amount"]
 
-        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
-            result = await session.call_tool("echo", {"text": "hello world"})
-            output_text = result.content[0].text
-            print(f"Result: {output_text}")
+        try:
+            async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+                result = await session.call_tool("echo", {"text": "hello world"})
+                print(f"Result: {result.content[0].text}")
+        except AIEconomyError as err:  # payment refused, settlement failed, bad config ...
+            raise SystemExit(f"Paid call failed: {err}")
 
         after_balance = ALGOD.account_info(buyer_addr)["amount"]
         drop = before_balance - after_balance
@@ -187,163 +193,76 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
 
     ```javascript localnet/js_pay.mjs expandable
     /**
-     * Full end-to-end payment flow against an x402 HTTP paywall on LocalNet.
+     * Pay an x402 paywall from JavaScript on LocalNet (start server_for_js.py first, port 9221).
      *
-     * Demonstrates:
-     * 1. Funding a fresh test account from the LocalNet KMD dispenser.
-     * 2. Requesting a paywalled resource and receiving HTTP 402 with PAYMENT-REQUIRED.
-     * 3. Decoding payment requirements using decodePaymentRequired().
-     * 4. Building and signing the exact AVM transaction group via payForRequirement().
-     * 5. Retrying the request with PAYMENT-SIGNATURE and verifying exact 5000 microALGO deduction.
-     *
-     * How to run:
-     *   # Ensure server_for_js.py is running on port 9221
      *   node localnet/js_pay.mjs
      *
-     * What it prints:
-     *   HTTP 402 status, decoded requirement, HTTP 200 status, settlement txid,
-     *   and balance drop of exactly 5000 microALGO.
+     * Fetch -> 402 -> decodePaymentRequired -> payForRequirement (with explicit spend controls)
+     * -> retry with PAYMENT-SIGNATURE -> check the exact 5000 microALGO balance drop.
      */
+    import { SpendLimitExceededError, X402AvmError, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+    import { algod, newFundedAccount, signerFor } from './_localnet.mjs';
 
-    import algosdk from 'algosdk';
-    import {
-      decodePaymentRequired,
-      payForRequirement,
-    } from 'x402-avm-js';
+    const URL = 'http://127.0.0.1:9221/paid';
+    const balance = async (addr) => (await algod.accountInformation(addr).do()).amount;
 
-    const ALGOD_URL = 'http://localhost:4001';
-    const ALGOD_TOKEN = 'a'.repeat(64);
-    const KMD_URL = 'http://localhost';
-    const KMD_PORT = 4002;
-    const KMD_TOKEN = 'a'.repeat(64);
-    const SERVER_URL = 'http://127.0.0.1:9221/paid';
+    const buyer = await newFundedAccount();
+    const before = await balance(buyer.address);
 
-    async function fundFromKmd(algod, kmd, targetAddr, amount = 10_000_000n) {
-      const wallets = (await kmd.listWallets()).wallets;
-      const defWallet = wallets.find((w) => w.name === 'unencrypted-default-wallet');
-      if (!defWallet) throw new Error('Default KMD wallet not found');
+    const res402 = await fetch(URL);
+    if (res402.status !== 402) throw new Error(`Expected 402, got ${res402.status}`);
+    const challenge = decodePaymentRequired(res402.headers.get('payment-required'));
+    const [req] = challenge.accepts;
+    console.log(`Server asks ${req.amount} units of asset ${req.asset} -> ${req.payTo}`);
 
-      const handle = (await kmd.initWalletHandle(defWallet.id, '')).wallet_handle_token;
-      const addresses = (await kmd.listKeys(handle)).addresses;
+    // Spend controls are checked before anything is signed. The default cap is 1,000,000 base units;
+    // here we tighten it and pin the asset, network and recipient.
+    const controls = {
+      maxAmount: 10_000n,
+      allowedAssets: ['0'],
+      allowedNetworks: [req.network],
+      allowedPayTo: [req.payTo],
+    };
 
-      let dispenserAddr = addresses[0];
-      let maxBal = 0n;
-      for (const addr of addresses) {
-        const info = await algod.accountInformation(addr).do();
-        const bal = BigInt(info.amount);
-        if (bal > maxBal) {
-          maxBal = bal;
-          dispenserAddr = addr;
-        }
-      }
-
-      const exported = await kmd.exportKey(handle, '', dispenserAddr);
-      const dispenserSk = exported.private_key;
-
-      const sp = await algod.getTransactionParams().do();
-      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: dispenserAddr,
-        receiver: targetAddr,
-        amount,
-        suggestedParams: sp,
-      });
-
-      const signed = txn.signTxn(dispenserSk);
-      const { txid } = await algod.sendRawTransaction(signed).do();
-      await algosdk.waitForConfirmation(algod, txid, 5);
+    try {
+      const signature = await payForRequirement(challenge, buyer.address, algod, signerFor(buyer.sk), controls);
+      const paid = await fetch(URL, { headers: { 'payment-signature': signature } });
+      console.log(`Paid response: ${paid.status}`, await paid.json());
+    } catch (err) {
+      if (err instanceof SpendLimitExceededError) throw new Error(`Refused to overpay: ${err.message}`);
+      if (err instanceof X402AvmError) throw new Error(`x402 error ${err.code}: ${err.message}`);
+      throw err;
     }
 
-    async function main() {
-      const algod = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_URL);
-      const kmd = new algosdk.Kmd(KMD_TOKEN, KMD_URL, KMD_PORT);
+    const drop = before - (await balance(buyer.address));
+    console.log(`Balance drop: ${drop} microALGO`);
+    if (drop !== 5000n) throw new Error(`Expected a drop of 5000 microALGO, got ${drop}`);
 
-      // 1. Generate and fund a fresh buyer account
-      const buyer = algosdk.generateAccount();
-      const buyerAddr = buyer.addr.toString();
-      console.log(`Created buyer account: ${buyerAddr}`);
-      await fundFromKmd(algod, kmd, buyerAddr, 10_000_000n);
-
-      const accBefore = await algod.accountInformation(buyerAddr).do();
-      const balBefore = BigInt(accBefore.amount);
-      console.log(`Initial buyer balance: ${balBefore} microALGO`);
-
-      // 2. Request paywalled endpoint (expect 402 Payment Required)
-      console.log(`\nFetching ${SERVER_URL} without payment...`);
-      const initialRes = await fetch(SERVER_URL);
-      console.log(`Initial response status: ${initialRes.status}`);
-
-      if (initialRes.status !== 402) {
-        throw new Error(`Expected HTTP 402, got ${initialRes.status}`);
-      }
-
-      const reqHeader = initialRes.headers.get('PAYMENT-REQUIRED') ?? initialRes.headers.get('payment-required');
-      if (!reqHeader) {
-        throw new Error('PAYMENT-REQUIRED header missing in 402 response');
-      }
-
-      // 3. Decode payment requirements
-      const challenge = decodePaymentRequired(reqHeader);
-      console.log(`Decoded x402 challenge version: ${challenge.x402Version}`);
-      const req = challenge.accepts[0];
-      console.log(`Accepted requirement: ${req.amount} units of asset ${req.asset} to ${req.payTo}`);
-
-      // 4. Build and sign payment group
-      const signTxns = async (unsignedBytesList, indexes) => {
-        return unsignedBytesList.map((bytes, idx) => {
-          if (indexes.includes(idx)) {
-            const txn = algosdk.decodeUnsignedTransaction(bytes);
-            return txn.signTxn(buyer.sk);
-          }
-          return null;
-        });
-      };
-
-      const paymentSignature = await payForRequirement(challenge, buyerAddr, algod, signTxns);
-      console.log(`Payment signature header constructed (length: ${paymentSignature.length})`);
-
-      // 5. Retry request with PAYMENT-SIGNATURE
-      console.log(`\nRetrying ${SERVER_URL} with PAYMENT-SIGNATURE...`);
-      const paidRes = await fetch(SERVER_URL, {
-        headers: {
-          'PAYMENT-SIGNATURE': paymentSignature,
-        },
-      });
-
-      console.log(`Paid response status: ${paidRes.status}`);
-      if (paidRes.status !== 200) {
-        const errorText = await paidRes.text();
-        throw new Error(`Expected HTTP 200, got ${paidRes.status}: ${errorText}`);
-      }
-
-      const paidData = await paidRes.json();
-      console.log(`Response payload: ${JSON.stringify(paidData)}`);
-
-      // 6. Verify buyer balance drop
-      const accAfter = await algod.accountInformation(buyerAddr).do();
-      const balAfter = BigInt(accAfter.amount);
-      const balanceDrop = balBefore - balAfter;
-
-      console.log(`Final buyer balance: ${balAfter} microALGO`);
-      console.log(`Balance drop: ${balanceDrop} microALGO`);
-
-      if (balanceDrop !== 5000n) {
-        throw new Error(`Expected exact balance drop of 5000 microALGO, got ${balanceDrop}`);
-      }
-
-      console.log('\nPayment completed and verified successfully.');
-    }
-
-    main().catch((err) => {
-      console.error('Test failed:', err);
-      process.exit(1);
-    });
+    // A 50,000 microALGO demand would exceed the 10,000 cap and is refused without signing.
+    const greedy = { ...challenge, accepts: [{ ...req, amount: '50000' }] };
+    await payForRequirement(greedy, buyer.address, algod, signerFor(buyer.sk), controls).then(
+      () => { throw new Error('Spend cap did not trigger'); },
+      (err) => console.log(`Over-cap request rejected: ${err.constructor.name}`),
+    );
     ```
 
     <sub>Source: [examples/localnet/js_pay.mjs](https://github.com/x402-avm/examples/blob/main/localnet/js_pay.mjs)</sub>
 
     {/* /example */}
 
-    The script prints the `402` status, the decoded requirement, the `200` status after payment, the settled transaction id and a balance drop of 5,000 microALGO.
+    ```text
+    Server asks 5000 units of asset 0 -> UR633JM3BS4KZMBELB7COIFAN65JOL5JLSDMHKT34FX4NXHJATFOFTQRWA
+    Paid response: 200 {
+      status: 'ok',
+      data: 'Access granted to premium resource',
+      txid: 'B3UQGJQZVSHVNNTS6TZ7H4ONG6DRJVTBBRI2V6CDTM45MLFBYLZA',
+      payer: 'PVGZFLS3MLQRRH2QJMRQUMH75ZOQQYNSPKFKXFN2URPIJ4MSTFBAZI6WB4'
+    }
+    Balance drop: 5000 microALGO
+    Over-cap request rejected: SpendLimitExceededError
+    ```
+
+    The last line is the spend controls at work. `payForRequirement` checks every offer against them before anything is signed: by default it refuses any payment above 1,000,000 base units (1 ALGO or 1 USDC), and here the script tightens the cap to 10,000 and pins the asset, network and recipient. A server that asks for more gets a `SpendLimitExceededError`, and the wallet is never asked to sign. See [Guardrails](/agents/guardrails#javascript-clients).
 
     <Note>
       `x402-avm-js` builds and signs payments; it does not include an MCP client transport. To call paid MCP tools from code, use `paid_mcp_session` from Python, or decode the `402` returned by a tool call yourself as shown on [Discovering prices](/agents/discovering-prices).

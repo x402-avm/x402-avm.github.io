@@ -17,7 +17,7 @@ flowchart TD
     E -- Yes --> F[Sign fee payer transaction, submit group, wait for confirmation]
     F --> G{Settled?}
     G -- Yes --> H[Commit the hash, return the result]
-    G -- No --> I[Release the hash, return ToolError]
+    G -- No --> I[Release the hash, raise SettlementError]
     E -- No --> J[Release the hash, return the error, submit nothing]
 ```
 
@@ -27,7 +27,7 @@ flowchart TD
 4. **Settle or discard.**
    - The tool succeeded (no exception, no `isError` result): the group is submitted, the hash is committed and the result is returned.
    - The tool failed: the reservation is released and the error is returned. The signed group is dropped, so the buyer is not charged.
-   - Settlement failed (for example, the transactions expired or the fee payer is out of ALGO): the reservation is released and the client receives `ToolError("payment settlement failed: <reason>")` instead of the tool result.
+   - Settlement failed (for example, the transactions expired or the fee payer is out of ALGO): the reservation is released and the client receives `SettlementError("payment settlement failed: <reason>")` instead of the tool result.
 
 A reservation that is never settled or released is released after 300 seconds.
 
@@ -67,7 +67,7 @@ from ai_economy_sdk import DefaultAvmSigner, PaymentGate, paid_mcp_session
 from _localnet import ALGOD, new_funded_account
 
 SERVER_PORT = 9204
-SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/sse"
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/mcp"
 PRICE = 5000
 
 
@@ -90,7 +90,7 @@ def main() -> None:
         prices={"fail_tool": PRICE},
     )
 
-    app = gate.wrap(mcp)
+    app = gate.wrap(mcp, transport="streamable-http")
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=SERVER_PORT, log_level="error"))
     server_thread = threading.Thread(target=server.run, daemon=True)
     server_thread.start()

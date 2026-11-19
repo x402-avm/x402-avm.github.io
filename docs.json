@@ -244,7 +244,8 @@
                   "reference/python/ai-economy-sdk/payment-gate",
                   "reference/python/ai-economy-sdk/ai-economy-sdk",
                   "reference/python/ai-economy-sdk/default-avm-signer",
-                  "reference/python/ai-economy-sdk/chain-reader"
+                  "reference/python/ai-economy-sdk/chain-reader",
+                  "reference/python/ai-economy-sdk/settle-on-success-middleware"
                 ]
               },
               {
@@ -276,6 +277,18 @@
                   "reference/python/ai-economy-sdk/endpoints"
                 ]
               },
+              {
+                "group": "Errors",
+                "pages": [
+                  "reference/python/ai-economy-sdk/ai-economy-error",
+                  "reference/python/ai-economy-sdk/configuration-error",
+                  "reference/python/ai-economy-sdk/unknown-network-error",
+                  "reference/python/ai-economy-sdk/algod-client-required-error",
+                  "reference/python/ai-economy-sdk/payment-verification-error",
+                  "reference/python/ai-economy-sdk/payment-required-error",
+                  "reference/python/ai-economy-sdk/settlement-error"
+                ]
+              },
               "reference/python/ai-economy-sdk/constants"
             ]
           },
@@ -297,6 +310,13 @@
                   "reference/python/x402-algorand/exact-avm-client-scheme",
                   "reference/python/x402-algorand/exact-avm-server-scheme",
                   "reference/python/x402-algorand/exact-avm-facilitator-scheme"
+                ]
+              },
+              {
+                "group": "Signers",
+                "pages": [
+                  "reference/python/x402-algorand/payer-avm-signer",
+                  "reference/python/x402-algorand/server-avm-signer"
                 ]
               },
               {
@@ -347,6 +367,17 @@
                   "reference/python/x402-algorand/from-atomic-amount"
                 ]
               },
+              {
+                "group": "Errors",
+                "pages": [
+                  "reference/python/x402-algorand/x402-algorand-error",
+                  "reference/python/x402-algorand/network-error",
+                  "reference/python/x402-algorand/network-mismatch-error",
+                  "reference/python/x402-algorand/transaction-decode-error",
+                  "reference/python/x402-algorand/signing-error",
+                  "reference/python/x402-algorand/simulation-error"
+                ]
+              },
               "reference/python/x402-algorand/constants"
             ]
           },
@@ -367,9 +398,19 @@
                 "pages": [
                   "reference/js/pay-for-requirement",
                   "reference/js/decode-payment-required",
+                  "reference/js/parse-payment-required",
                   "reference/js/select-requirement",
                   "reference/js/build-exact-avm-group",
                   "reference/js/encode-payment-header"
+                ]
+              },
+              {
+                "group": "Spend controls",
+                "pages": [
+                  "reference/js/check-spend-controls",
+                  "reference/js/spend-controls",
+                  "reference/js/amount-limit",
+                  "reference/js/default-max-amount"
                 ]
               },
               {
@@ -400,6 +441,19 @@
                   "reference/js/build-group-result",
                   "reference/js/algorand-network"
                 ]
+              },
+              {
+                "group": "Errors",
+                "pages": [
+                  "reference/js/x402-avm-error",
+                  "reference/js/spend-limit-exceeded-error",
+                  "reference/js/payment-not-allowed-error",
+                  "reference/js/invalid-payment-required-error",
+                  "reference/js/no-supported-requirement-error",
+                  "reference/js/network-mismatch-error",
+                  "reference/js/unknown-network-error",
+                  "reference/js/invalid-options-error"
+                ]
               }
             ]
           }
@@ -414,6 +468,7 @@
               "resources/security",
               "resources/troubleshooting",
               "resources/error-codes",
+              "resources/http-402-reference",
               "resources/faq",
               "resources/changelog"
             ]
