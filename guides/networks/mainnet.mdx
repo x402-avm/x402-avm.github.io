@@ -1,0 +1,385 @@
+---
+title: "MainNet"
+description: "Take a paid tool to Algorand MainNet: USDC pricing, fee payer funding, key management, replay storage and a production checklist."
+---
+
+On MainNet, payments move real ALGO and USDC. This page lists what changes from TestNet and what to check before going live.
+
+| | |
+|---|---|
+| Short name | `mainnet` |
+| CAIP-2 id | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` |
+| Genesis hash | `wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` |
+| Default algod | `https://mainnet-api.algonode.cloud` |
+| Default indexer | `https://mainnet-idx.algonode.cloud` |
+| USDC asset id | `31566704` (Circle USDC, 6 decimals) |
+| Constants | Python `ai_economy_sdk.MAINNET`, JavaScript `MAINNET` |
+
+## Production checklist
+
+<Steps>
+  <Step title="Separate the accounts">
+    Use a receiving account (`pay_to`) where revenue collects, and a separate fee payer account that holds only the ALGO needed for fees. In `PaymentGate` the fee payer is the account of the `signer`; `pay_to` can be any address.
+  </Step>
+  <Step title="Opt in to USDC">
+    If you price in USDC, the `pay_to` account must opt in to asset `31566704`, and so must every buyer. Opting in raises an account's minimum balance by 0.1 ALGO.
+  </Step>
+  <Step title="Fund the fee payer">
+    The fee payer pays 2,000 microALGO per settled call, whatever asset the price is in.
+
+    | Settled calls | Fees |
+    |---|---|
+    | 500 | 1 ALGO |
+    | 5,000 | 10 ALGO |
+    | 50,000 | 100 ALGO |
+
+    Add the account's minimum balance (0.1 ALGO) on top, and alert when the balance falls below a threshold you choose. Query it with `algod_client.account_info(address)["amount"]`.
+  </Step>
+  <Step title="Load keys from a secret store">
+    Never put private keys or mnemonics in source code or images. Load them at start-up from environment variables injected by your platform, or from a secret manager.
+  </Step>
+  <Step title="Share the replay store across workers">
+    With more than one worker process, pass `replay_db="/var/lib/<service>/replay.db"` so every worker sees every payment. The default in-memory store only protects one process.
+  </Step>
+  <Step title="Use reliable nodes">
+    The public AlgoNode endpoints need no key. For production traffic, consider your own node or a provider with an SLA, and set `ALGOD_MAINNET_URL` and `INDEXER_MAINNET_URL` (or pass clients explicitly).
+  </Step>
+  <Step title="Keep the clock in sync">
+    Identity proofs are accepted only within 120 seconds of the server's clock. Run NTP on servers that rely on passes, subscriptions or per-caller prices.
+  </Step>
+  <Step title="Simulate before you go live">
+    Run the read-only MainNet simulations ([below](#simulate-on-mainnet)): they build ALGO and USDC payment groups for MainNet and check them with algod's simulate endpoint, without keys or funds.
+  </Step>
+</Steps>
+
+## Server configuration
+
+```python server_mainnet.py
+import os
+
+from algosdk import account, mnemonic
+from algosdk.v2client import algod
+from ai_economy_sdk import MAINNET, DefaultAvmSigner, PaymentGate, usdc_asset_id
+
+algod_client = algod.AlgodClient(
+    os.environ.get("ALGOD_TOKEN", ""),
+    os.environ.get("ALGOD_URL", "https://mainnet-api.algonode.cloud"),
+)
+fee_payer_sk = mnemonic.to_private_key(os.environ["FEE_PAYER_MNEMONIC"])
+
+gate = PaymentGate(
+    signer=DefaultAvmSigner(fee_payer_sk, algod_client=algod_client),
+    network=MAINNET,
+    pay_to=os.environ["VENDOR_ADDRESS"],
+    asset_id=usdc_asset_id(MAINNET),     # 31566704
+    prices={"analyze": 100_000},         # 0.10 USDC
+    replay_db="/var/lib/my-service/replay.db",
+)
+app = gate.wrap(mcp)
+```
+
+Run it with several workers, for example `uvicorn server_mainnet:app --workers 4`. Turn on logging for settlement outcomes and fee warnings with `logging.getLogger("ai_economy_sdk").setLevel(logging.INFO)`.
+
+## Simulate on MainNet
+
+[`mainnet/simulate.py`](https://github.com/x402-avm/examples/blob/main/mainnet/simulate.py) and [`mainnet/simulate.mjs`](https://github.com/x402-avm/examples/blob/main/mainnet/simulate.mjs) find funded accounts through the public MainNet indexer, build four payment groups (ALGO and USDC `31566704`, each with and without a fee payer) and check them with algod's simulate endpoint. Nothing is signed with a funded key and nothing is sent.
+
+```bash
+python mainnet/simulate.py
+node mainnet/simulate.mjs
+```
+
+<Tabs>
+  <Tab title="Python">
+    {/* example: mainnet/simulate.py */}
+
+    ```python mainnet/simulate.py expandable
+    """Public network simulation for x402 Algorand payments on MainNet.
+
+    Performs read-only validation against real MainNet ledger without spending funds:
+    1. Queries the public AlgoNode indexer to identify real funded accounts holding USDC and ALGO.
+    2. Constructs payment groups for ALGO (asset 0) and USDC (asset 31566704), both with and without fee payers.
+    3. Evaluates the constructed atomic groups via Algod's simulate endpoint using empty signatures.
+    4. Confirms that all 4 test cases simulate successfully without on-chain execution.
+
+    How to run:
+        python mainnet/simulate.py
+
+    What it prints:
+        Network progress and "ok" for each of the 4 test cases.
+    """
+
+    import httpx
+    from algosdk import encoding, transaction
+    from algosdk.v2client import algod
+    from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
+
+    from x402.schemas import PaymentRequirements
+    from x402_algorand.constants import ALGORAND_MAINNET_CAIP2
+    from x402_algorand.exact.client import ExactAvmScheme as ExactAvmClient
+
+    CONFIG = {
+        "name": "mainnet",
+        "caip": ALGORAND_MAINNET_CAIP2,
+        "algod_url": "https://mainnet-api.algonode.cloud",
+        "indexer_url": "https://mainnet-idx.algonode.cloud",
+        "usdc_id": 31566704,
+    }
+
+
+    class _WatchOnly:
+        """Watch-only signer providing an address without private keys.
+
+        Generates unsigned transactions for simulate endpoint evaluation.
+        """
+
+        def __init__(self, address: str):
+            self.address = address
+
+        def sign_transactions(self, txns: list[bytes], indexes: list[int]) -> list[None]:
+            return [None] * len(txns)
+
+
+    def get_algod(cfg: dict) -> algod.AlgodClient:
+        return algod.AlgodClient("", cfg["algod_url"])
+
+
+    def find_funded_holders(cfg: dict, n: int = 3) -> list[str]:
+        """Find real funded accounts holding ALGO and USDC via public indexer."""
+        client = get_algod(cfg)
+        idx_url = cfg["indexer_url"]
+        usdc_id = cfg["usdc_id"]
+
+        resp = httpx.get(
+            f"{idx_url}/v2/assets/{usdc_id}/balances",
+            params={"currency-greater-than": 5_000_000, "limit": 40},
+            timeout=20,
+        )
+        balances = resp.json().get("balances", [])
+        out = []
+        for b in balances:
+            try:
+                info = client.account_info(b["address"])
+                if info["amount"] - info["min-balance"] > 2_000_000 and not info.get("auth-addr"):
+                    out.append(b["address"])
+                    if len(out) == n:
+                        return out
+            except Exception:
+                continue
+        raise RuntimeError(f"Could not find {n} funded USDC holders on {cfg['name']}")
+
+
+    def simulate_group(client: algod.AlgodClient, group_b64: list[str]) -> str | None:
+        """Run transaction group through Algod simulation with empty signatures."""
+        stx = []
+        for b in group_b64:
+            d = encoding.msgpack_decode(b)
+            stx.append(
+                d
+                if isinstance(d, transaction.SignedTransaction)
+                else transaction.SignedTransaction(d, None)
+            )
+        req = SimulateRequest(
+            txn_groups=[SimulateRequestTransactionGroup(txns=stx)],
+            allow_empty_signatures=True,
+        )
+        res = client.simulate_transactions(req)
+        return res["txn-groups"][0].get("failure-message")
+
+
+    def main():
+        net_name = CONFIG["name"]
+        caip = CONFIG["caip"]
+        print(f"Testing {net_name} ({caip})...")
+
+        holders = find_funded_holders(CONFIG, n=3)
+        payer, pay_to, fp = holders
+        client = get_algod(CONFIG)
+
+        test_cases = [
+            ("ALGO", "0", True),
+            ("ALGO", "0", False),
+            ("USDC", str(CONFIG["usdc_id"]), True),
+            ("USDC", str(CONFIG["usdc_id"]), False),
+        ]
+
+        for asset_name, asset_id, fee_payer in test_cases:
+            extra = {"feePayer": fp} if fee_payer else {}
+            req = PaymentRequirements(
+                scheme="exact",
+                network=caip,
+                asset=asset_id,
+                amount="10000",
+                pay_to=pay_to,
+                max_timeout_seconds=300,
+                extra=extra,
+            )
+
+            avm_client = ExactAvmClient(_WatchOnly(payer), algod_url=CONFIG["algod_url"])
+            payload = avm_client.create_payment_payload(req)
+            failure = simulate_group(client, payload["paymentGroup"])
+            assert failure is None, f"Simulation failed on {net_name} {asset_name} (fee_payer={fee_payer}): {failure}"
+            print(f"  {net_name} {asset_name} (fee_payer={fee_payer}): ok")
+
+        print(f"All {net_name} simulations passed successfully.")
+
+
+    if __name__ == "__main__":
+        main()
+    ```
+
+    <sub>Source: [examples/mainnet/simulate.py](https://github.com/x402-avm/examples/blob/main/mainnet/simulate.py)</sub>
+
+    {/* /example */}
+  </Tab>
+  <Tab title="JavaScript">
+    {/* example: mainnet/simulate.mjs */}
+
+    ```javascript mainnet/simulate.mjs expandable
+    /**
+     * Read-only simulation of ALGO and USDC payments on Algorand MainNet.
+     *
+     * Demonstrates:
+     * 1. Discovering real funded USDC holders via public AlgoNode indexer endpoints.
+     * 2. Building exact AVM payment groups using a watch-only signer (empty signatures).
+     * 3. Verifying transaction group validity on live MainNet nodes using algod.simulateTransactions().
+     * 4. Verifying both native ALGO and ASA USDC transfers, with and without fee payers.
+     *
+     * How to run:
+     *   node mainnet/simulate.mjs
+     *
+     * What it prints:
+     *   Found account addresses on MainNet and "ok" for each simulated payment scenario.
+     */
+
+    import algosdk from 'algosdk';
+    import {
+      MAINNET,
+      algodClient,
+      payForRequirement,
+    } from 'x402-avm-js';
+
+    async function fundedUsdcHolders(net, algod) {
+      const url = `${net.indexerUrl}/v2/assets/${net.usdc}/balances?currency-greater-than=5000000&limit=40`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Indexer query failed with status ${res.status}`);
+      }
+      const rows = (await res.json()).balances;
+      const out = [];
+      for (const row of rows) {
+        const info = await algod.accountInformation(row.address).do();
+        if (info.amount - info.minBalance > 2_000_000n && !info.authAddr) {
+          out.push(row.address);
+        }
+        if (out.length === 3) return out;
+      }
+      throw new Error(`Not enough funded USDC holders found on ${net.genesisId}`);
+    }
+
+    async function main() {
+      const name = 'mainnet';
+      const net = MAINNET;
+      console.log(`Testing ${name} (${net.caip2})...`);
+      const algod = algodClient(name);
+
+      const [payer, payTo, feePayer] = await fundedUsdcHolders(net, algod);
+      console.log(`Discovered active accounts:`);
+      console.log(`  Payer:     ${payer}`);
+      console.log(`  PayTo:     ${payTo}`);
+      console.log(`  Fee payer: ${feePayer}`);
+
+      const cases = [
+        { asset: 'ALGO', assetId: '0', withFeePayer: true },
+        { asset: 'ALGO', assetId: '0', withFeePayer: false },
+        { asset: 'USDC', assetId: String(net.usdc), withFeePayer: true },
+        { asset: 'USDC', assetId: String(net.usdc), withFeePayer: false },
+      ];
+
+      for (const c of cases) {
+        const requirement = {
+          scheme: 'exact',
+          network: net.caip2,
+          asset: c.assetId,
+          amount: '10000',
+          payTo,
+          maxTimeoutSeconds: 300,
+          extra: c.withFeePayer ? { feePayer } : {},
+        };
+
+        const emptySigner = async (txns) => txns.map(() => null);
+
+        const challenge = {
+          x402Version: 2,
+          accepts: [requirement],
+        };
+
+        const paymentSignatureHeader = await payForRequirement(challenge, payer, algod, emptySigner);
+        const decoded = JSON.parse(new TextDecoder().decode(algosdk.base64ToBytes(paymentSignatureHeader)));
+
+        const txns = decoded.payload.paymentGroup.map(
+          (b64) =>
+            new algosdk.SignedTransaction({
+              txn: algosdk.decodeUnsignedTransaction(algosdk.base64ToBytes(b64)),
+            })
+        );
+
+        const sim = await algod
+          .simulateTransactions(
+            new algosdk.modelsv2.SimulateRequest({
+              txnGroups: [new algosdk.modelsv2.SimulateRequestTransactionGroup({ txns })],
+              allowEmptySignatures: true,
+            })
+          )
+          .do();
+
+        const failure = sim.txnGroups[0].failureMessage ?? null;
+        if (failure) {
+          throw new Error(`Simulation failed on ${name} ${c.asset} (withFeePayer=${c.withFeePayer}): ${failure}`);
+        }
+
+        console.log(`  ${name} ${c.asset} (fee_payer=${c.withFeePayer}): ok`);
+      }
+
+      console.log(`All ${name} simulations passed successfully.`);
+    }
+
+    main().catch((err) => {
+      console.error('MainNet simulation failed:', err);
+      process.exit(1);
+    });
+    ```
+
+    <sub>Source: [examples/mainnet/simulate.mjs](https://github.com/x402-avm/examples/blob/main/mainnet/simulate.mjs)</sub>
+
+    {/* /example */}
+  </Tab>
+</Tabs>
+
+## One configuration for every network
+
+[`mainnet/config.py`](https://github.com/x402-avm/examples/blob/main/mainnet/config.py) builds the endpoints, network id and payment asset for LocalNet, TestNet or MainNet from the `NETWORK` environment variable (ALGO on LocalNet, USDC on TestNet and MainNet). `python mainnet/config.py --dry-run` prints the configuration of all three networks without sending a transaction. It is walked through in [From LocalNet to MainNet](/tutorials/localnet-to-mainnet).
+
+## Client configuration
+
+```python
+async with paid_mcp_session(server_url, buyer_sk, "mainnet") as session:
+    ...
+```
+
+`paid_mcp_session` uses the public MainNet algod unless you pass `algod_url`. Its default [spend controls](/agents/guardrails) allow ALGO and MainNet USDC up to 1,000,000 base units (1 ALGO or 1 USDC) per payment and refuse anything else before signing. Keep a buyer's balance small: the per-payment cap does not limit how many payments a session makes.
+
+## Monitor
+
+| Signal | How |
+|---|---|
+| Fee payer balance | `algod_client.account_info(fee_payer)["amount"]` on a schedule |
+| Settlement failures | `ToolError("payment settlement failed: ...")` in server logs |
+| Replay rejections | `402` responses with `{"error": "Replay detected"}` |
+| Revenue | Payments to `pay_to` on the indexer, or `ChainReader.past_usage` per buyer |
+
+## Related
+
+- [Accepting USDC on MainNet](/tutorials/usdc-on-mainnet): opt-ins, decimals and fee payer details.
+- [LocalNet to MainNet](/tutorials/localnet-to-mainnet): a configuration pattern driven by one `NETWORK` variable.
+- [Production deployment](/ai-economy-sdk/production) and [Security](/resources/security).

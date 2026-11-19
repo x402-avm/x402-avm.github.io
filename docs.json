@@ -1,0 +1,425 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "x402-avm",
+  "description": "Pay-per-call MCP tools and HTTP APIs settled on Algorand with the x402 protocol: ai-economy-sdk, x402-algorand and x402-avm-js.",
+  "colors": {
+    "primary": "#2447B8",
+    "light": "#8EA6F5",
+    "dark": "#1B3A9A"
+  },
+  "background": {
+    "color": {
+      "light": "#FFFFFF",
+      "dark": "#0C1018"
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "/"
+  },
+  "favicon": "/favicon.svg",
+  "icons": {
+    "library": "lucide"
+  },
+  "styling": {
+    "eyebrows": "section",
+    "codeblocks": "system"
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/x402-avm"
+      },
+      {
+        "label": "PyPI",
+        "href": "https://pypi.org/project/ai-economy-sdk/"
+      },
+      {
+        "label": "npm",
+        "href": "https://www.npmjs.com/package/x402-avm-js"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/x402-avm"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/x402-avm"
+    },
+    "links": [
+      {
+        "header": "Packages",
+        "items": [
+          {
+            "label": "ai-economy-sdk on PyPI",
+            "href": "https://pypi.org/project/ai-economy-sdk/"
+          },
+          {
+            "label": "x402-algorand on PyPI",
+            "href": "https://pypi.org/project/x402-algorand/"
+          },
+          {
+            "label": "x402-avm-js on npm",
+            "href": "https://www.npmjs.com/package/x402-avm-js"
+          }
+        ]
+      },
+      {
+        "header": "Source",
+        "items": [
+          {
+            "label": "GitHub organization",
+            "href": "https://github.com/x402-avm"
+          },
+          {
+            "label": "Examples",
+            "href": "https://github.com/x402-avm/examples"
+          },
+          {
+            "label": "Docs source",
+            "href": "https://github.com/x402-avm/x402-avm.github.io"
+          }
+        ]
+      },
+      {
+        "header": "For agents",
+        "items": [
+          {
+            "label": "llms.txt",
+            "href": "https://x402-avm.github.io/llms.txt"
+          },
+          {
+            "label": "llms-full.txt",
+            "href": "https://x402-avm.github.io/llms-full.txt"
+          }
+        ]
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
+  },
+  "seo": {
+    "indexing": "navigable",
+    "metatags": {
+      "og:site_name": "x402-avm docs"
+    }
+  },
+  "search": {
+    "prompt": "Search the docs"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Get started",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "index",
+              "quickstart",
+              "how-it-works",
+              "installation",
+              "networks",
+              "glossary"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Networks",
+            "pages": [
+              "guides/networks/localnet",
+              "guides/networks/testnet",
+              "guides/networks/mainnet"
+            ]
+          },
+          {
+            "group": "ai-economy-sdk",
+            "pages": [
+              "ai-economy-sdk/overview",
+              "ai-economy-sdk/server",
+              "ai-economy-sdk/client",
+              "ai-economy-sdk/pricing",
+              "ai-economy-sdk/passes",
+              "ai-economy-sdk/identity",
+              "ai-economy-sdk/settlement",
+              "ai-economy-sdk/production"
+            ]
+          },
+          {
+            "group": "x402-algorand",
+            "pages": [
+              "x402-algorand/overview",
+              "x402-algorand/client",
+              "x402-algorand/resource-server",
+              "x402-algorand/facilitator",
+              "x402-algorand/fastapi",
+              "x402-algorand/flask",
+              "x402-algorand/httpx-requests",
+              "x402-algorand/avm-exact-scheme",
+              "x402-algorand/custom-networks"
+            ]
+          },
+          {
+            "group": "x402-avm-js",
+            "pages": [
+              "x402-avm-js/overview",
+              "x402-avm-js/browser-wallets",
+              "x402-avm-js/node",
+              "x402-avm-js/identity",
+              "x402-avm-js/networks"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tutorials",
+        "groups": [
+          {
+            "group": "Tutorials",
+            "pages": [
+              "tutorials/index",
+              "tutorials/paid-mcp-tool",
+              "tutorials/browser-paywall",
+              "tutorials/usdc-on-mainnet",
+              "tutorials/localnet-to-mainnet"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "For AI agents",
+        "groups": [
+          {
+            "group": "Agents that pay",
+            "pages": [
+              "agents/overview",
+              "agents/paying-for-tools",
+              "agents/discovering-prices",
+              "agents/guardrails"
+            ]
+          },
+          {
+            "group": "Agents that read and edit",
+            "pages": [
+              "agents/ai-tools",
+              "agents/agents-md"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "reference/index"
+            ]
+          },
+          {
+            "group": "ai-economy-sdk",
+            "pages": [
+              "reference/python/ai-economy-sdk/index",
+              {
+                "group": "Server",
+                "pages": [
+                  "reference/python/ai-economy-sdk/payment-gate",
+                  "reference/python/ai-economy-sdk/ai-economy-sdk",
+                  "reference/python/ai-economy-sdk/default-avm-signer",
+                  "reference/python/ai-economy-sdk/chain-reader"
+                ]
+              },
+              {
+                "group": "Client",
+                "pages": [
+                  "reference/python/ai-economy-sdk/paid-mcp-session"
+                ]
+              },
+              {
+                "group": "Identity",
+                "pages": [
+                  "reference/python/ai-economy-sdk/make-identity-txn",
+                  "reference/python/ai-economy-sdk/sign-identity-txn",
+                  "reference/python/ai-economy-sdk/verify-identity-txn",
+                  "reference/python/ai-economy-sdk/sign-identity",
+                  "reference/python/ai-economy-sdk/verify-identity"
+                ]
+              },
+              {
+                "group": "Networks",
+                "pages": [
+                  "reference/python/ai-economy-sdk/resolve-network",
+                  "reference/python/ai-economy-sdk/genesis-hash-for",
+                  "reference/python/ai-economy-sdk/endpoints-for",
+                  "reference/python/ai-economy-sdk/usdc-asset-id",
+                  "reference/python/ai-economy-sdk/is-public",
+                  "reference/python/ai-economy-sdk/register-network",
+                  "reference/python/ai-economy-sdk/network-from-algod",
+                  "reference/python/ai-economy-sdk/endpoints"
+                ]
+              },
+              "reference/python/ai-economy-sdk/constants"
+            ]
+          },
+          {
+            "group": "x402-algorand",
+            "pages": [
+              "reference/python/x402-algorand/index",
+              {
+                "group": "Registration",
+                "pages": [
+                  "reference/python/x402-algorand/register-exact-avm-client",
+                  "reference/python/x402-algorand/register-exact-avm-server",
+                  "reference/python/x402-algorand/register-exact-avm-facilitator"
+                ]
+              },
+              {
+                "group": "Schemes",
+                "pages": [
+                  "reference/python/x402-algorand/exact-avm-client-scheme",
+                  "reference/python/x402-algorand/exact-avm-server-scheme",
+                  "reference/python/x402-algorand/exact-avm-facilitator-scheme"
+                ]
+              },
+              {
+                "group": "Signer protocols",
+                "pages": [
+                  "reference/python/x402-algorand/client-avm-signer",
+                  "reference/python/x402-algorand/facilitator-avm-signer"
+                ]
+              },
+              {
+                "group": "Types",
+                "pages": [
+                  "reference/python/x402-algorand/exact-avm-payload",
+                  "reference/python/x402-algorand/decoded-transaction-info",
+                  "reference/python/x402-algorand/transaction-group-info"
+                ]
+              },
+              {
+                "group": "Network utilities",
+                "pages": [
+                  "reference/python/x402-algorand/caip2-from-genesis-hash",
+                  "reference/python/x402-algorand/normalize-network",
+                  "reference/python/x402-algorand/register-network",
+                  "reference/python/x402-algorand/get-genesis-hash",
+                  "reference/python/x402-algorand/network-from-genesis-hash",
+                  "reference/python/x402-algorand/is-valid-network",
+                  "reference/python/x402-algorand/get-network-config",
+                  "reference/python/x402-algorand/get-usdc-asa-id"
+                ]
+              },
+              {
+                "group": "Transaction utilities",
+                "pages": [
+                  "reference/python/x402-algorand/decode-transaction-bytes",
+                  "reference/python/x402-algorand/decode-base64-transaction",
+                  "reference/python/x402-algorand/decode-payment-group",
+                  "reference/python/x402-algorand/encode-transaction-group",
+                  "reference/python/x402-algorand/validate-no-security-risks",
+                  "reference/python/x402-algorand/validate-fee-payer-transaction",
+                  "reference/python/x402-algorand/is-valid-address"
+                ]
+              },
+              {
+                "group": "Amount utilities",
+                "pages": [
+                  "reference/python/x402-algorand/parse-money-to-decimal",
+                  "reference/python/x402-algorand/to-atomic-amount",
+                  "reference/python/x402-algorand/from-atomic-amount"
+                ]
+              },
+              "reference/python/x402-algorand/constants"
+            ]
+          },
+          {
+            "group": "x402 core (upstream)",
+            "pages": [
+              "reference/x402/core",
+              "reference/x402/schemas",
+              "reference/x402/http"
+            ]
+          },
+          {
+            "group": "x402-avm-js",
+            "pages": [
+              "reference/js/index",
+              {
+                "group": "Payments",
+                "pages": [
+                  "reference/js/pay-for-requirement",
+                  "reference/js/decode-payment-required",
+                  "reference/js/select-requirement",
+                  "reference/js/build-exact-avm-group",
+                  "reference/js/encode-payment-header"
+                ]
+              },
+              {
+                "group": "Identity",
+                "pages": [
+                  "reference/js/build-identity-txn",
+                  "reference/js/encode-identity-header"
+                ]
+              },
+              {
+                "group": "Networks",
+                "pages": [
+                  "reference/js/resolve-network",
+                  "reference/js/network-from-genesis-hash",
+                  "reference/js/network-from-algod",
+                  "reference/js/algod-client",
+                  "reference/js/mainnet",
+                  "reference/js/testnet",
+                  "reference/js/localnet-endpoints"
+                ]
+              },
+              {
+                "group": "Types",
+                "pages": [
+                  "reference/js/payment-required",
+                  "reference/js/payment-requirements",
+                  "reference/js/resource-info",
+                  "reference/js/build-group-result",
+                  "reference/js/algorand-network"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Resources",
+        "groups": [
+          {
+            "group": "Resources",
+            "pages": [
+              "resources/security",
+              "resources/troubleshooting",
+              "resources/error-codes",
+              "resources/faq",
+              "resources/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

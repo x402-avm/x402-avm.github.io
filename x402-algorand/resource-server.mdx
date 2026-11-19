@@ -1,0 +1,72 @@
+---
+title: "Resource server"
+description: "Configure x402ResourceServer to turn protected routes into Algorand payment requirements."
+---
+
+## The resource server's job
+
+In x402, the resource server:
+
+1. Matches an incoming request to a route configuration.
+2. Builds `PaymentRequirements`: scheme, network, asset, amount and `pay_to`.
+3. Adds scheme-specific data, which for Algorand is the asset's decimals and the facilitator's fee payer address.
+4. Hands verification and settlement to a facilitator.
+
+## Configure it
+
+```python
+from x402 import x402Facilitator, x402ResourceServer
+from x402_algorand.exact.register import register_exact_avm_facilitator, register_exact_avm_server
+
+# An in-process facilitator for the network you sell on
+facilitator = x402Facilitator()
+register_exact_avm_facilitator(facilitator, facilitator_signer, network)
+
+server = x402ResourceServer(facilitator)
+register_exact_avm_server(server)  # registers the scheme for "algorand:*"
+```
+
+`x402ResourceServer` also accepts a facilitator client that talks to a remote facilitator; see the upstream `x402` documentation.
+
+## Prices
+
+The Algorand server scheme accepts these price forms in a route:
+
+| Price | Meaning |
+|---|---|
+| `{"amount": "10000", "asset": "0"}` | 10,000 microALGO |
+| `{"amount": "50000", "asset": "31566704"}` | 50,000 base units of USDC (0.05 USDC) on MainNet |
+| `{"amount": "50000"}` | No asset: the network's USDC |
+| `"$0.01"`, `0.01` | A dollar amount, converted to the network's USDC (6 decimals) unless a custom money parser handles it |
+
+```python
+routes = {
+    "GET /api/reports": {
+        "accepts": [
+            {
+                "scheme": "exact",
+                "price": {"amount": "50000", "asset": "0"},  # 50,000 microALGO
+                "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+                "pay_to": "YOUR_ALGORAND_ADDRESS",
+            }
+        ]
+    }
+}
+```
+
+Register a custom parser for dollar amounts with `ExactAvmServerScheme().register_money_parser(parser)`; see the [reference](/reference/python/x402-algorand/exact-avm-server-scheme).
+
+## Requirement enhancement
+
+When the server builds requirements, the Algorand scheme's `enhance_payment_requirements` adds:
+
+- `extra.decimals`: 6, unless the route already set it.
+- `extra.feePayer`: a fee payer address advertised by the facilitator. If its signer manages several addresses, the facilitator picks one at random, which spreads fee costs across them. Without a fee payer, the client pays its own fee.
+- `extra.genesisHash` and `extra.genesisId`, when the network is registered.
+
+A client that sees `extra.feePayer` builds the two-transaction group in which the fee payer covers all fees.
+
+## Next steps
+
+- [Facilitator](/x402-algorand/facilitator): the signer the facilitator needs.
+- [FastAPI](/x402-algorand/fastapi) and [Flask](/x402-algorand/flask): middleware that uses this server.

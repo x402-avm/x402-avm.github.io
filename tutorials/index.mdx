@@ -1,0 +1,22 @@
+---
+title: "Tutorials"
+sidebarTitle: "Overview"
+description: "End-to-end walkthroughs for selling and buying tool calls on Algorand."
+---
+
+Each tutorial uses code from the [examples repository](https://github.com/x402-avm/examples): `localnet/paid_mcp_tool/`, `localnet/browser_paywall/` and `mainnet/config.py`. Install the dependencies once from the repository root with `pip install -r requirements.txt` and `npm install`.
+
+<Columns cols={2}>
+  <Card title="Build and sell a paid MCP tool" icon="hammer" href="/tutorials/paid-mcp-tool">
+    A FastMCP server that charges per 100 characters summarized, a paying client, and an indexer check of the settled payment. About 15 minutes. Python 3.10+, LocalNet.
+  </Card>
+  <Card title="Browser paywall with x402-avm-js" icon="lock" href="/tutorials/browser-paywall">
+    A FastAPI backend and a static page that unlocks content after a wallet-signed payment, bundled with esbuild. About 20 minutes. Node.js 18+, Python 3.10+, LocalNet.
+  </Card>
+  <Card title="Accepting USDC on MainNet" icon="circle-dollar-sign" href="/tutorials/usdc-on-mainnet">
+    Opt-ins, 6-decimal prices, the fee payer model with ASAs, and read-only simulation against live networks. About 25 minutes.
+  </Card>
+  <Card title="From LocalNet to MainNet" icon="route" href="/tutorials/localnet-to-mainnet">
+    One configuration module driven by a `NETWORK` variable, a dry run across all networks, and a rollout checklist. About 15 minutes.
+  </Card>
+</Columns>

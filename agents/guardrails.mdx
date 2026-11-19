@@ -1,0 +1,106 @@
+---
+title: "Guardrails"
+description: "Limit what an agent can spend: spend controls, budget wallets, network pinning and operational practices."
+---
+
+An agent that can pay needs limits it cannot talk itself out of. Combine the controls below; none of them alone bounds total spend.
+
+## Recommended setup
+
+<Steps>
+  <Step title="Use a dedicated budget wallet">
+    Give the agent its own Algorand account and fund it with only what it may spend in a period. The account balance is the hard limit on total spend, because no payment can exceed it. Top it up on a schedule rather than holding a large balance.
+  </Step>
+  <Step title="Keep spend controls on, and tight">
+    Spend controls cap each payment and restrict assets, and they are enforced before signing. Lower the cap to the most you would pay for any single call:
+
+    ```python
+    paid_mcp_session(url, key, "mainnet", spend_controls={"max_amount_per_payment": "$0.05"})
+    ```
+
+    Never pass `spend_controls=False` to an autonomous agent.
+  </Step>
+  <Step title="Pin the network">
+    Pass the network explicitly (`"mainnet"` or `"testnet"`). The session registers the payment scheme for that network only, and the client refuses to pay an offer for a different network than its algod's.
+  </Step>
+  <Step title="Allow only the assets you hold">
+    The default allow-list is ALGO and USDC (MainNet and TestNet). Add another ASA only with its own cap, in base units.
+  </Step>
+  <Step title="Develop on TestNet">
+    Build and test the agent with free TestNet ALGO before giving it a MainNet key.
+  </Step>
+  <Step title="Protect the key">
+    Inject the key from a secret store at start-up. Do not put it in prompts, tool arguments, logs or the agent's memory. Treat it as compromised if the agent's context could leak it, and rotate it.
+  </Step>
+  <Step title="Watch the wallet">
+    Payments are public on chain. Alert on the budget wallet's balance and on unexpected recipients.
+  </Step>
+</Steps>
+
+## Spend controls reference
+
+Spend controls come from the official `x402` client. `paid_mcp_session` passes `spend_controls` to it unchanged.
+
+| Value | Effect |
+|---|---|
+| `None` (default) | ALGO on any Algorand network and USDC on MainNet and TestNet; at most `$1` per payment, which is 1,000,000 base units (1 ALGO or 1 USDC). |
+| `{"max_amount_per_payment": "$0.25"}` | Same assets, cap of `$0.25` (250,000 base units). |
+| `{"max_amount_per_payment": False}` | Same assets, no cap. |
+| `{"allowed_assets": True}` | Any asset; the cap still applies to the default assets. |
+| `{"allowed_assets": [{...}]}` | The default assets plus the listed ones, each with an optional cap in base units. |
+| `False` | No controls at all. |
+
+A dollar cap is converted with the asset's 6 decimals: `$1` is 1,000,000 base units for both USDC and ALGO. For ALGO that means a cap of 1 ALGO, whatever ALGO's market price is. Set the cap with that in mind when an agent pays in ALGO.
+
+### Allow another ASA
+
+```python
+spend_controls = {
+    "allowed_assets": [
+        {
+            "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+            "asset": "12345678",                  # ASA id
+            "max_amount_per_payment": "5000000",  # base units, not dollars
+        }
+    ]
+}
+```
+
+A per-asset cap must be an integer string in base units; a dollar value raises `ValueError`.
+
+## What spend controls do not do
+
+- They do not cap the **total** a session spends; an agent in a loop can make many payments under the cap. Use a budget wallet.
+- They do not judge **value**. A vendor can price any call up to your cap. Prefer vendors you trust, and keep caps low.
+- They do not apply to **passes** an agent buys directly, which are ordinary payments outside x402.
+
+## JavaScript clients
+
+`x402-avm-js` signs whatever offer `payForRequirement` selects for the wallet's network; it has no spend controls. Check the offer yourself before signing:
+
+```ts
+import { decodePaymentRequired, payForRequirement, selectRequirement, MAINNET } from 'x402-avm-js';
+
+const MAX_AMOUNT = 50_000n;                   // base units
+const ALLOWED_ASSETS = new Set(['0', String(MAINNET.usdc)]);
+
+const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
+const offer = selectRequirement(required, 'mainnet');
+if (!ALLOWED_ASSETS.has(offer.asset) || BigInt(offer.amount) > MAX_AMOUNT) {
+  throw new Error(`refusing to pay ${offer.amount} of asset ${offer.asset}`);
+}
+const header = await payForRequirement(required, address, algod, signTxns);
+```
+
+`payForRequirement` selects the offer the same way (`selectRequirement` for the algod's network), so the checked offer is the one that gets paid when `algod` is on MainNet.
+
+## Server-side protections that help agents
+
+These are enforced by `PaymentGate` and the facilitator, whatever the client does:
+
+- A failed tool call is not charged.
+- A signed payment can be used once.
+- The amount must equal the quoted price exactly, and the recipient must be the quoted `payTo`.
+- Payment groups that close an account, leave an account rekeyed, or register participation keys are rejected.
+
+See [Security](/resources/security).

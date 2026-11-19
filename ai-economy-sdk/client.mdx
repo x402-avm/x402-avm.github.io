@@ -1,0 +1,169 @@
+---
+title: "Client"
+description: "Call paid MCP tools from Python with paid_mcp_session, which answers 402 challenges within spend limits."
+---
+
+`paid_mcp_session` opens an MCP session over SSE whose HTTP client pays x402 challenges automatically. When a tool call returns `402`, the session builds the Algorand payment, signs the buyer's transaction, and retries the call. Your code only sees the tool result.
+
+## Prerequisites
+
+- Python 3.10 or newer, with `ai-economy-sdk` installed.
+- A funded Algorand account on the server's network (its base64 private key).
+- The SSE URL of a paid MCP server, for example `http://127.0.0.1:9201/sse`.
+
+## Open a paid session
+
+```python
+import asyncio
+from ai_economy_sdk import paid_mcp_session
+
+async def main() -> None:
+    async with paid_mcp_session("http://127.0.0.1:9201/sse", buyer_private_key, "localnet") as session:
+        tools = await session.list_tools()
+        print("Tools:", [t.name for t in tools.tools])
+
+        result = await session.call_tool("echo", {"text": "hello world"})
+        print("Response:", result.content[0].text)
+
+asyncio.run(main())
+```
+
+The yielded object is an initialized `mcp.ClientSession`, so every MCP client method is available. Listing tools is free; only `tools/call` requests are priced.
+
+### Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `sse_url` | required | The server's `/sse` endpoint. |
+| `private_key` | required | Base64 Algorand private key of the buyer, as returned by `algosdk.account.generate_account()` or `algosdk.mnemonic.to_private_key()`. |
+| `network` | required | `"mainnet"`, `"testnet"`, `"localnet"`, or a CAIP-2 id. |
+| `algod_url` | `None` | algod endpoint. Defaults to AlgoNode for MainNet and TestNet, `http://localhost:4001` for LocalNet. |
+| `algod_token` | `None` | algod token. |
+| `identity` | `True` | Attach identity headers to every request, so the server knows the caller's address for passes, subscriptions and per-caller prices. |
+| `timeout` | `30.0` | HTTP timeout in seconds. Stream reads allow up to 300 seconds. |
+| `spend_controls` | `None` | Client-side spending limits; see below. |
+
+Full reference: [`paid_mcp_session`](/reference/python/ai-economy-sdk/paid-mcp-session).
+
+<Note>
+  With `identity=True` the session sends the legacy identity headers `x-sender-address`, `x-sender-timestamp` and `x-sender-signature`, signed by the buyer key. `PaymentGate` accepts these and the `X-Identity-Txn` format. See [Identity](/ai-economy-sdk/identity).
+</Note>
+
+## Spend controls
+
+The session uses the official `x402` client, which checks every payment against its spend controls before signing. A payment that fails the check is refused with `NoMatchingRequirementsError` and nothing is signed.
+
+**Defaults** (`spend_controls=None`):
+
+- Allowed assets: ALGO (`"0"`) on every Algorand network, and USDC on MainNet (`"31566704"`) and TestNet (`"10458941"`).
+- Cap: `$1` per payment, which is 1,000,000 base units for these 6-decimal assets: 1 ALGO or 1 USDC.
+
+**Change them:**
+
+```python
+# Raise the cap for the default assets to $10 per payment
+async with paid_mcp_session(url, key, network, spend_controls={"max_amount_per_payment": "$10"}) as s: ...
+
+# Remove the cap but keep the default asset list
+async with paid_mcp_session(url, key, network, spend_controls={"max_amount_per_payment": False}) as s: ...
+
+# Allow any asset, keep the default cap
+async with paid_mcp_session(url, key, network, spend_controls={"allowed_assets": True}) as s: ...
+
+# Allow one more ASA, with a cap in its base units
+async with paid_mcp_session(url, key, network, spend_controls={
+    "allowed_assets": [{
+        "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+        "asset": "12345678",
+        "max_amount_per_payment": "5000000",
+    }]
+}) as s: ...
+
+# Disable spend controls entirely (any asset, any amount)
+async with paid_mcp_session(url, key, network, spend_controls=False) as s: ...
+```
+
+<Warning>
+  Spend controls cap each payment, not the total a session spends. Fund the buyer account with only what it may spend. For agents, see [Guardrails](/agents/guardrails).
+</Warning>
+
+## Complete example
+
+{/* example: localnet/quickstart_client.py */}
+
+```python localnet/quickstart_client.py
+"""Paid MCP client session using ai-economy-sdk on Algorand LocalNet.
+
+Funds a fresh buyer account via the LocalNet dispenser, establishes a paid MCP
+session to http://127.0.0.1:9201/sse, calls the 'echo' tool, and verifies the on-chain
+charge.
+
+How to run:
+    1. Start quickstart_server.py in the background
+    2. python localnet/quickstart_client.py
+
+What it prints:
+    Result: echo: hello world
+    Balance drop: 5000 microALGO
+"""
+import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ai_economy_sdk import paid_mcp_session
+from _localnet import ALGOD, new_funded_account
+
+SERVER_URL = "http://127.0.0.1:9201/sse"
+
+
+async def main() -> None:
+    buyer_sk, buyer_addr = new_funded_account(algos=5)
+    before_balance = ALGOD.account_info(buyer_addr)["amount"]
+
+    async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+        result = await session.call_tool("echo", {"text": "hello world"})
+        output_text = result.content[0].text
+        print(f"Result: {output_text}")
+
+    after_balance = ALGOD.account_info(buyer_addr)["amount"]
+    drop = before_balance - after_balance
+    print(f"Balance drop: {drop} microALGO")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+<sub>Source: [examples/localnet/quickstart_client.py](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_client.py)</sub>
+
+{/* /example */}
+
+```bash
+python localnet/quickstart_client.py
+```
+
+```text
+Result: echo: hello world
+Balance drop: 5000 microALGO
+```
+
+## How the negotiation works
+
+1. The session opens `GET /sse` and receives the endpoint for messages (`/messages/?session_id=...`).
+2. `call_tool` posts the JSON-RPC request `tools/call`.
+3. `PaymentGate` answers `402` with a `PAYMENT-REQUIRED` header: network, scheme `exact`, asset, amount, `payTo`, and the fee payer address in `extra.feePayer`.
+4. The client checks the requirement against its spend controls and its own network, fetches suggested parameters from algod, and builds the group: the fee payer's transaction (unsigned) and the buyer's payment with fee 0, which it signs.
+5. It resends the same request with `PAYMENT-SIGNATURE`.
+6. The server verifies, runs the tool, settles, and the result arrives on the SSE stream.
+
+## JavaScript clients
+
+`x402-avm-js` builds and signs the same payment from a browser wallet or Node, but has no MCP transport of its own. Use it to pay x402 HTTP endpoints, or to answer a tool call's `402` yourself. See [x402-avm-js](/x402-avm-js/overview) and [Discovering prices](/agents/discovering-prices).
+
+## Next steps
+
+- [Pricing](/ai-economy-sdk/pricing)
+- [Passes](/ai-economy-sdk/passes)
+- [Agents that pay for tools](/agents/paying-for-tools)

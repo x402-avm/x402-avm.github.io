@@ -1,0 +1,72 @@
+---
+title: "Schemas"
+description: "PaymentRequired, PaymentRequirements, PaymentPayload, VerifyResponse and SettleResponse from the official x402 Python SDK."
+---
+
+Pydantic models from `x402.schemas` (official `x402` package, fields as of 2.28.0). In JSON they use the camelCase alias shown; in Python, the snake_case field name.
+
+## PaymentRequired
+
+The object in the `PAYMENT-REQUIRED` header of a `402` response.
+
+| Field (alias) | Type | Description |
+|---|---|---|
+| `x402_version` (`x402Version`) | `int` | Protocol version, 2. |
+| `error` | `str \| None` | Optional reason. |
+| `resource` | `ResourceInfo \| None` | The protected resource: `url`, and optionally `description`, `mime_type` (`mimeType`), `service_name`, `tags`, `icon_url`. |
+| `accepts` | `list[PaymentRequirements]` | The offers the server accepts. |
+| `extensions` | `dict \| None` | Protocol extensions. |
+
+## PaymentRequirements
+
+One offer.
+
+| Field (alias) | Type | Description |
+|---|---|---|
+| `scheme` | `str` | `"exact"`. |
+| `network` | `str` | CAIP-2 id, validated against `^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$`. |
+| `asset` | `str` | `"0"` for ALGO, otherwise the ASA id. |
+| `amount` | `str` | Base units. |
+| `pay_to` (`payTo`) | `str` | Recipient address. |
+| `max_timeout_seconds` (`maxTimeoutSeconds`) | `int` | How long the offer is valid. |
+| `extra` | `dict` | Scheme data; for Algorand `decimals`, `feePayer`, `genesisHash`, `genesisId`. |
+
+## PaymentPayload
+
+The object in the `PAYMENT-SIGNATURE` header.
+
+| Field (alias) | Type | Description |
+|---|---|---|
+| `x402_version` (`x402Version`) | `int` | 2. |
+| `payload` | `dict` | Scheme payload; for Algorand `paymentGroup` (base64 msgpack transactions) and `paymentIndex`. |
+| `accepted` | `PaymentRequirements` | The offer being paid. |
+| `resource` | `ResourceInfo \| None` | |
+| `extensions` | `dict \| None` | |
+
+## VerifyResponse
+
+Returned by `verify`.
+
+| Field (alias) | Type | Description |
+|---|---|---|
+| `is_valid` (`isValid`) | `bool` | Whether the payment passed every check. |
+| `invalid_reason` (`invalidReason`) | `str \| None` | An [error code](/resources/error-codes). |
+| `invalid_message` (`invalidMessage`) | `str \| None` | Details, such as algod's simulation message. |
+| `payer` | `str \| None` | Buyer address. |
+| `extensions`, `extension_responses`, `extra` | `dict \| None` | Extension data. |
+
+## SettleResponse
+
+Returned by `settle`, and carried in the `PAYMENT-RESPONSE` header.
+
+| Field (alias) | Type | Description |
+|---|---|---|
+| `success` | `bool` | Whether the group was submitted and confirmed. |
+| `transaction` | `str` | Transaction id. |
+| `network` | `str` | CAIP-2 id. |
+| `payer` | `str \| None` | Buyer address. |
+| `error_reason` (`errorReason`) | `str \| None` | For example `transaction_failed`. |
+| `error_message` (`errorMessage`) | `str \| None` | Node error message. |
+| `amount` | `str \| None` | |
+| `extensions`, `extension_responses`, `extra` | `dict \| None` | Extension data. |
+| `after_settle_aborted` (`afterSettleAborted`) | `bool` | |

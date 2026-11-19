@@ -1,0 +1,62 @@
+---
+title: "HTTP integration"
+description: "Header encoding, HTTP clients and server middleware from the official x402 Python SDK."
+---
+
+From the official `x402` package (signatures as of 2.28.0). The upstream project is the authoritative reference.
+
+## Header encoding
+
+From `x402.http`:
+
+| Function | Signature | Returns |
+|---|---|---|
+| `decode_payment_required_header` | `(header_value: str)` | `PaymentRequired` |
+| `encode_payment_required_header` | `(payment_required)` | `str` |
+| `decode_payment_signature_header` | `(header_value: str)` | `PaymentPayload` |
+| `encode_payment_signature_header` | `(payload)` | `str` |
+| `decode_payment_response_header` | `(header_value: str)` | `SettleResponse` |
+| `encode_payment_response_header` | `(settle_response)` | `str` |
+
+Each header is base64-encoded JSON of the corresponding [schema](/reference/x402/schemas).
+
+## Clients
+
+| Name | Module | Description |
+|---|---|---|
+| `wrapHttpxWithPayment(x402_client, **httpx_kwargs)` | `x402.http.clients.httpx` | Returns an `httpx.AsyncClient` whose transport pays `402` responses and retries. |
+| `x402HttpxClient(x402_client, **kwargs)` | `x402.http.clients.httpx` | `httpx.AsyncClient` subclass with the payment transport; used by `paid_mcp_session`. |
+| `x402AsyncTransport(client, transport=None)` | `x402.http.clients.httpx` | The transport itself; can wrap another transport such as `httpx.ASGITransport`. |
+| `wrapRequestsWithPayment(session, client, **adapter_kwargs)` | `x402.http.clients` | Mounts a payment adapter on a `requests.Session`; takes an `x402ClientSync`. |
+
+Example: [HTTPX and requests](/x402-algorand/httpx-requests).
+
+## Server middleware
+
+| Name | Module | Signature |
+|---|---|---|
+| `payment_middleware` (FastAPI) | `x402.http.middleware.fastapi` | `(routes, server, paywall_config=None, paywall_provider=None, sync_facilitator_on_start=True)`; register with `app.middleware("http")(...)`. |
+| `payment_middleware` (Flask) | `x402.http.middleware.flask` | `(app, routes, server, paywall_config=None, paywall_provider=None, sync_facilitator_on_start=True)`; `server` is an `x402ResourceServerSync`. Needs `x402[flask]`. |
+| `x402HTTPResourceServer` | `x402.http` | Framework-independent route matching and payment processing; `PaymentGate` uses it. |
+
+Examples: [FastAPI](/x402-algorand/fastapi), [Flask](/x402-algorand/flask).
+
+### Route configuration
+
+```python
+routes = {
+    "GET /weather": {
+        "accepts": [
+            {
+                "scheme": "exact",
+                "price": {"amount": "10000", "asset": "0"},
+                "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+                "pay_to": "YOUR_ALGORAND_ADDRESS",
+            }
+        ],
+        "description": "Weather data",
+    }
+}
+```
+
+The route key is `"<METHOD> <path>"`; `PaymentGate` uses `"POST /messages*"`. `price` can also be a callable that receives the request context, which is how `PaymentGate` prices each tool call.

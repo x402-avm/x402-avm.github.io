@@ -1,0 +1,58 @@
+---
+title: "FAQ"
+description: "Answers to common questions about x402 on Algorand and the x402-avm packages."
+---
+
+<AccordionGroup>
+  <Accordion title="What is x402?">
+    An open protocol that uses HTTP status `402 Payment Required` to sell a resource per request. The server sends the price in a `PAYMENT-REQUIRED` header, the client retries with a signed payment in `PAYMENT-SIGNATURE`, and the server reports settlement in `PAYMENT-RESPONSE`. See [How it works](/how-it-works).
+  </Accordion>
+  <Accordion title="What is the exact scheme on Algorand?">
+    The x402 scheme in which the client pays exactly the requested amount of one asset to one address. On Algorand the payment is an atomic group; the facilitator checks recipient, asset and amount, the buyer's signature, and simulates the group before settling it. See [AVM exact scheme](/x402-algorand/avm-exact-scheme).
+  </Accordion>
+  <Accordion title="Why does the payment group have two transactions?">
+    Transaction 0 is the server's fee payer paying itself 0 ALGO with a 2,000 microALGO fee; transaction 1 is the buyer's payment with fee 0. Algorand pools fees within a group, so transaction 0 pays for both and the buyer pays exactly the price.
+  </Accordion>
+  <Accordion title="Who pays the network fees?">
+    The server's fee payer, 2,000 microALGO per settled call. Without a fee payer the buyer would pay the usual 1,000 microALGO fee; `PaymentGate` always sponsors fees.
+  </Accordion>
+  <Accordion title="What is the lowest price I can charge in ALGO?">
+    More than 2,000 microALGO, the fees the server pays per call. `PaymentGate` refuses fixed ALGO prices in `(0, 2000]` unless you pass `allow_loss=True`; 3,000 microALGO is a sensible minimum. The floor does not apply to USDC or other ASA prices.
+  </Accordion>
+  <Accordion title="How can buyers pay in USDC if fees are in ALGO?">
+    The buyer's transaction transfers USDC with a fee of 0, and the server's fee payer pays the fees in ALGO in the same group. The buyer needs no ALGO beyond its minimum balance.
+  </Accordion>
+  <Accordion title="What is the minimum balance requirement?">
+    Every Algorand account must hold 0.1 ALGO, plus 0.1 ALGO per opted-in asset (applications add more). An account cannot spend below it.
+  </Accordion>
+  <Accordion title="Why must accounts opt in to USDC?">
+    Algorand accounts only hold assets they have opted in to, which prevents unwanted assets from being sent to them. Opt in with a 0-amount transfer of the asset to yourself. Both the vendor and the buyer need it.
+  </Accordion>
+  <Accordion title="When is a payment settled?">
+    After the tool succeeds. `PaymentGate` verifies and simulates the payment first, runs the tool, and only then submits the group and waits for confirmation. The result is returned after settlement.
+  </Accordion>
+  <Accordion title="What if the tool fails after the payment was verified?">
+    The payment is discarded: the replay reservation is released and the group is never submitted. The client receives the tool's error result and is not charged.
+  </Accordion>
+  <Accordion title="How does replay protection work with several workers?">
+    Pass `replay_db="/path/replay.db"`. Every worker then shares one SQLite database in WAL mode; reserving a payment is an insert on a primary key, so two workers cannot accept the same payment.
+  </Accordion>
+  <Accordion title="How is a pass different from a per-call payment?">
+    A pass is one on-chain payment to the vendor with the note `x402-pass:<scope>`. While it is valid (30 days by default), the vendor's gate charges the holder nothing for tools in that scope. See [Passes](/ai-economy-sdk/passes).
+  </Accordion>
+  <Accordion title="Can an identity proof move my funds?">
+    No. An `X-Identity-Txn` proof is a 0-amount payment to yourself with a fee of 0 and a validity window long past, so the network will never accept it. It is only a signature showing that you control the address.
+  </Accordion>
+  <Accordion title="Which wallets work with x402-avm-js?">
+    Any wallet that can sign Algorand transactions given the encoded transactions and the indexes to sign, for example through `@txnlab/use-wallet-react` (Pera, Defly, Lute, KMD and others), or a local key in Node. See [Browser wallets](/x402-avm-js/browser-wallets).
+  </Accordion>
+  <Accordion title="How long does a payment take?">
+    The server waits for the group to be confirmed in a block before returning the result. Algorand blocks are final once confirmed, with no forks to wait out; confirmation usually takes a few seconds.
+  </Accordion>
+  <Accordion title="Can an AI agent pay for tools safely?">
+    Yes, within limits you set: a dedicated wallet with a small balance, and spend controls that cap each payment and restrict assets. See [Guardrails](/agents/guardrails).
+  </Accordion>
+  <Accordion title="How do I move from LocalNet to MainNet?">
+    Change the network to `"mainnet"`, use production algod and indexer endpoints, usually switch the asset to USDC (`31566704`) and opt in, load keys from a secret store, fund the fee payer with ALGO, and share the replay store between workers. See the [MainNet guide](/guides/networks/mainnet).
+  </Accordion>
+</AccordionGroup>

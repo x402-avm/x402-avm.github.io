@@ -1,0 +1,96 @@
+---
+title: "Production"
+description: "Run an ai-economy-sdk service on TestNet or MainNet: network settings, USDC, keys, fee payer funding, several workers and monitoring."
+---
+
+## Switch the network
+
+Going from LocalNet to TestNet or MainNet changes the `network`, the algod client and usually the asset:
+
+```python
+import os
+
+from algosdk import mnemonic
+from algosdk.v2client import algod
+from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+
+algod_client = algod.AlgodClient(
+    os.environ.get("ALGOD_TOKEN", ""),
+    os.environ.get("ALGOD_URL", "https://mainnet-api.algonode.cloud"),
+)
+signer = DefaultAvmSigner(mnemonic.to_private_key(os.environ["SERVER_MNEMONIC"]), algod_client=algod_client)
+
+gate = PaymentGate(
+    signer=signer,
+    network="mainnet",
+    pay_to=os.environ["VENDOR_ADDRESS"],
+    asset_id=31566704,                # USDC on MainNet
+    prices={"analyze": 100_000},      # 0.10 USDC
+    replay_db="/var/data/replay.db",  # shared by all workers
+)
+```
+
+The parameters of each network are printed by the [localnet/networks.py](https://github.com/x402-avm/examples/blob/main/localnet/networks.py) example and listed on [Networks](/networks).
+
+## Accept USDC
+
+1. Use asset `31566704` on MainNet or `10458941` on TestNet (`usdc_asset_id(network)` returns it).
+2. Prices are in base units with 6 decimals: `1_000_000` is 1 USDC, `10_000` is 0.01 USDC.
+3. The `pay_to` account and every buyer must opt in to the asset with a 0-amount asset transfer to themselves:
+
+```python
+from algosdk import transaction
+
+def opt_in(algod_client, address: str, private_key: str, asset_id: int) -> None:
+    sp = algod_client.suggested_params()
+    txn = transaction.AssetTransferTxn(sender=address, sp=sp, receiver=address, amt=0, index=asset_id)
+    txid = algod_client.send_transaction(txn.sign(private_key))
+    transaction.wait_for_confirmation(algod_client, txid, 4)
+```
+
+A payment to or from an account that has not opted in fails verification with `transaction_simulation_failed`. More in [Accepting USDC on MainNet](/tutorials/usdc-on-mainnet).
+
+## Manage keys
+
+Load keys at start-up from the environment or a secret manager, never from source code:
+
+```python
+import os
+from algosdk import mnemonic
+
+if "SERVER_PRIVATE_KEY" in os.environ:
+    server_key = os.environ["SERVER_PRIVATE_KEY"]
+elif "SERVER_MNEMONIC" in os.environ:
+    server_key = mnemonic.to_private_key(os.environ["SERVER_MNEMONIC"])
+else:
+    raise RuntimeError("missing server credentials")
+```
+
+`DefaultAvmSigner` keeps the key in process memory and signs only the transactions it is asked to sign: the fee payer transaction of each group. Keep the fee payer account separate from the account that collects revenue, and hold only working capital in it.
+
+## Fund the fee payer
+
+The fee payer pays 2,000 microALGO per settled call (transaction 0 of the group pays the fees of both transactions), whatever asset the price is in.
+
+| Settled calls | Fees |
+|---|---|
+| 500 | 1 ALGO |
+| 5,000 | 10 ALGO |
+| 50,000 | 100 ALGO |
+
+Alert when the balance drops below a threshold (for example 5 ALGO), and remember the 0.1 ALGO minimum balance. When the fee payer cannot pay, settlement fails and callers receive `ToolError("payment settlement failed: ...")`; they are not charged.
+
+## Run several workers
+
+The default replay store lives in one process's memory. With `uvicorn app:app --workers 4` (or several containers sharing a disk), pass `replay_db` so every worker shares one SQLite database in WAL mode. See [Settlement](/ai-economy-sdk/settlement#replay-protection).
+
+## Monitor
+
+1. **Fee payer balance**: `algod_client.account_info(address)["amount"]` on a schedule.
+2. **Settlement latency**: time from tool completion to confirmation.
+3. **Replay rejections**: `402` with `{"error": "Replay detected"}` may indicate a misbehaving client or an attack.
+4. **Logs**: `logging.getLogger("ai_economy_sdk").setLevel(logging.INFO)` records settlement outcomes and fee floor warnings.
+
+## Checklist
+
+The [MainNet guide](/guides/networks/mainnet#production-checklist) has the full pre-launch checklist.

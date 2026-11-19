@@ -1,0 +1,146 @@
+---
+title: "Identity"
+description: "Prove wallet ownership with an X-Identity-Txn header signed by any Algorand wallet."
+---
+
+Servers that offer passes, subscriptions or per-caller prices need to know who is calling. A wallet proves it by signing an identity transaction that can never be executed. `x402-avm-js` builds and encodes it; servers verify it with `ai-economy-sdk`.
+
+## The identity transaction
+
+`buildIdentityTxn(address, genesisHashB64, ts?)` returns an unsigned payment with:
+
+- sender and receiver: `address`
+- amount 0 and a flat fee of 0
+- first valid round 1, last valid round 1000
+- the network's genesis hash
+- the note `x402-identity:<address>:<unix timestamp>`
+
+Its fee is below the network minimum and its rounds are long past on every live network, so it can never be confirmed or replayed on chain. It is only a signature.
+
+## Create the header
+
+```ts
+import algosdk from 'algosdk';
+import { buildIdentityTxn, encodeIdentityHeader, MAINNET } from 'x402-avm-js';
+
+const txn = buildIdentityTxn(myAddress, MAINNET.genesisHash);
+
+// With a browser wallet
+const [signed] = await wallet.signTransactions([algosdk.encodeUnsignedTransaction(txn)], [0]);
+// Or with a local key: const signed = txn.signTxn(account.sk);
+
+const headers = { 'X-Identity-Txn': encodeIdentityHeader(signed!) };
+```
+
+For LocalNet, read the genesis hash from algod instead of using a preset. In algosdk v3 it is a `Uint8Array`, so encode it: `algosdk.bytesToBase64((await algod.getTransactionParams().do()).genesisHash!)`.
+
+## Verify on the server
+
+```python
+from ai_economy_sdk import verify_identity_txn
+
+address = verify_identity_txn(request.headers.get("X-Identity-Txn"), GENESIS_HASH_B64, max_skew=120)
+if address is None:
+    raise HTTPException(status_code=401, detail="invalid identity proof")
+```
+
+`verify_identity_txn` accepts the proof only if it is a plain Ed25519-signed `pay` transaction from the address to itself, with amount 0, fee 0, no close-to or rekey, the expected genesis hash, a validity window of at most 1,000 rounds, the `x402-identity:<address>:<timestamp>` note, and a timestamp within 120 seconds of the server's clock. `PaymentGate` runs the same check on every tool call.
+
+## Cross-language example
+
+This script builds and signs a proof in JavaScript and verifies it with the Python SDK in a subprocess.
+
+{/* example: localnet/identity.mjs */}
+
+```javascript localnet/identity.mjs expandable
+/**
+ * Off-chain wallet identity proof generation and verification.
+ *
+ * Demonstrates:
+ * 1. Constructing an unsubmitted, zero-fee identity transaction using buildIdentityTxn().
+ * 2. Signing the identity transaction with the wallet private key.
+ * 3. Encoding the signed transaction into the X-Identity-Txn header value via encodeIdentityHeader().
+ * 4. Verifying the cryptographic proof using Python ai_economy_sdk.verify_identity_txn via subprocess.
+ *
+ * How to run:
+ *   node localnet/identity.mjs
+ *
+ * What it prints:
+ *   Generated address, encoded identity header, and the verified address returned by Python.
+ */
+
+import { execFileSync } from 'child_process';
+import algosdk from 'algosdk';
+import {
+  MAINNET,
+  buildIdentityTxn,
+  encodeIdentityHeader,
+} from 'x402-avm-js';
+
+const PYTHON_BIN = process.env.PYTHON || 'python3';
+
+async function main() {
+  console.log('Generating test account...');
+  const account = algosdk.generateAccount();
+  const address = account.addr.toString();
+  console.log(`Account address: ${address}`);
+
+  const genesisHash = MAINNET.genesisHash;
+  console.log(`Network genesis hash: ${genesisHash}`);
+
+  // 1. Build unsubmitted 0-fee self-payment transaction
+  const txn = buildIdentityTxn(address, genesisHash);
+  console.log(`Identity txn note: ${new TextDecoder().decode(txn.note)}`);
+
+  // 2. Sign transaction with account secret key
+  const signedBytes = txn.signTxn(account.sk);
+
+  // 3. Encode to base64 header value
+  const headerValue = encodeIdentityHeader(signedBytes);
+  console.log(`Encoded X-Identity-Txn header: ${headerValue.slice(0, 40)}... (length: ${headerValue.length})`);
+
+  // 4. Verify identity transaction with Python ai_economy_sdk.verify_identity_txn
+  console.log('\nVerifying identity header with Python ai_economy_sdk.verify_identity_txn...');
+  const pythonScript = `
+import sys, json
+from ai_economy_sdk import verify_identity_txn
+header = sys.argv[1]
+gh = sys.argv[2]
+verified_addr = verify_identity_txn(header, gh)
+print(json.dumps({"verified_address": verified_addr}))
+`;
+
+  const stdout = execFileSync(PYTHON_BIN, ['-c', pythonScript, headerValue, genesisHash], {
+    encoding: 'utf-8',
+  });
+
+  const result = JSON.parse(stdout.trim());
+  console.log(`Python verification result: ${result.verified_address}`);
+
+  if (result.verified_address !== address) {
+    throw new Error(`Address mismatch: expected ${address}, got ${result.verified_address}`);
+  }
+
+  console.log('\nIdentity proof verified successfully.');
+}
+
+main().catch((err) => {
+  console.error('Identity verification failed:', err);
+  process.exit(1);
+});
+```
+
+<sub>Source: [examples/localnet/identity.mjs](https://github.com/x402-avm/examples/blob/main/localnet/identity.mjs)</sub>
+
+{/* /example */}
+
+```bash
+node localnet/identity.mjs
+```
+
+It prints the account address, the note, the start of the encoded header, and the address returned by `verify_identity_txn`.
+
+## Next steps
+
+- [Identity in ai-economy-sdk](/ai-economy-sdk/identity)
+- [Passes](/ai-economy-sdk/passes)

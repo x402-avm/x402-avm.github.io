@@ -1,0 +1,141 @@
+---
+title: "Networks"
+description: "Supported Algorand networks, their CAIP-2 ids, default endpoints and USDC asset ids, and how to point the SDKs at your own nodes."
+---
+
+The SDKs work on Algorand MainNet, TestNet, LocalNet and private networks. Wherever an API takes a network, you can pass a short name or a CAIP-2 id.
+
+## Networks at a glance
+
+| Network | Short name | CAIP-2 id | Genesis hash | Default algod | Default indexer | USDC asset id |
+|---|---|---|---|---|---|---|
+| MainNet | `mainnet` | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | `wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` | `https://mainnet-api.algonode.cloud` | `https://mainnet-idx.algonode.cloud` | `31566704` |
+| TestNet | `testnet` | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` | `SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` | `https://testnet-api.algonode.cloud` | `https://testnet-idx.algonode.cloud` | `10458941` |
+| LocalNet | `localnet` | Derived from algod | Read from algod | `http://localhost:4001` | `http://localhost:8980` | None |
+
+MainNet and TestNet default to the public [AlgoNode](https://algonode.io) endpoints, which need no API key. USDC uses 6 decimals: `1000000` base units is 1 USDC.
+
+Network guides with setup steps and checklists: [LocalNet](/guides/networks/localnet), [TestNet](/guides/networks/testnet), [MainNet](/guides/networks/mainnet).
+
+## CAIP-2 network ids
+
+Network ids follow the [Algorand CAIP-2 profile](https://github.com/ChainAgnostic/namespaces/blob/main/algorand/caip2.md):
+
+- The namespace is `algorand`.
+- The reference is the first 32 characters of the network's genesis hash in URL-safe base64 (`+` becomes `-`, `/` becomes `_`, no padding).
+
+For MainNet, the genesis hash `wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` gives `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k`. The official `x402` SDK validates network ids against `^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$`, which is why the reference is 32 characters long.
+
+<Note>
+  Older releases used the full 44-character genesis hash (`algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=`). These legacy ids are still accepted as input everywhere and converted to the short form.
+</Note>
+
+A LocalNet gets a new genesis hash every time it is reset, so its id cannot be hard-coded. The SDKs read the genesis hash from algod: `resolve_network("localnet", algod_client)` in Python and `networkFromAlgod(algod)` in JavaScript.
+
+## Accepted network names
+
+| Input | Resolves to |
+|---|---|
+| `"mainnet"`, `"algorand-mainnet"`, `"algorand"` | MainNet |
+| `"testnet"`, `"algorand-testnet"` | TestNet |
+| `"localnet"` (Python also accepts `"algorand-localnet"`, `"dockernet"`, `"sandnet"`) | The network of the LocalNet algod |
+| `"algorand:<32 characters>"` | That network |
+| `"algorand:<44-character genesis hash>"` | That network, converted to the short id |
+
+These names are understood by `ai-economy-sdk` and `x402-avm-js`. The lower-level `x402-algorand` functions, such as `normalize_network`, take CAIP-2 ids and the x402 v1 names (`algorand-mainnet`, `algorand-testnet`, `algorand`), not `"mainnet"` or `"localnet"`.
+
+In JavaScript, `resolveNetwork("localnet")` throws because the id must be read from a node; use `networkFromAlgod(algodClient("localnet"))`.
+
+## Resolve networks in code
+
+<CodeGroup>
+```python Python
+from algosdk.v2client import algod
+from ai_economy_sdk import resolve_network, genesis_hash_for, endpoints_for, usdc_asset_id
+
+resolve_network("mainnet")    # 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
+genesis_hash_for("mainnet")   # 'wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8='
+usdc_asset_id("testnet")      # 10458941
+endpoints_for("testnet").algod_url  # 'https://testnet-api.algonode.cloud'
+
+# LocalNet: ask its algod
+local = algod.AlgodClient("a" * 64, "http://localhost:4001")
+resolve_network("localnet", local)  # 'algorand:<32 characters>'
+```
+
+```ts JavaScript
+import { algodClient, networkFromAlgod, networkFromGenesisHash, resolveNetwork, MAINNET } from 'x402-avm-js';
+
+resolveNetwork('testnet');  // 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'
+networkFromGenesisHash(MAINNET.genesisHash);  // 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
+MAINNET.usdc;  // 31566704
+
+// LocalNet: ask its algod
+const id = await networkFromAlgod(algodClient('localnet'));
+```
+</CodeGroup>
+
+The example [localnet/networks.py](https://github.com/x402-avm/examples/blob/main/localnet/networks.py) prints the full table for all three networks:
+
+```text
+Network    | CAIP-2 Identifier                            | Genesis Hash                                   | USDC ID    | Algod Endpoint                      | Indexer Endpoint
+mainnet    | algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k    | wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=   | 31566704   | https://mainnet-api.algonode.cloud  | https://mainnet-idx.algonode.cloud
+testnet    | algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe    | SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=   | 10458941   | https://testnet-api.algonode.cloud  | https://testnet-idx.algonode.cloud
+localnet   | algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY    | tg0cyjEz14FZK9BTpL2q0TOyFbc0McwYsFJbszmFANk=   | None       | http://localhost:4001               | http://localhost:8980
+```
+
+The LocalNet row differs on your machine.
+
+## Use your own nodes
+
+Set environment variables to replace the default endpoints. Python reads them when `x402_algorand` and `ai_economy_sdk` are imported.
+
+| Variable | Network | Default |
+|---|---|---|
+| `ALGOD_MAINNET_URL` | MainNet | `https://mainnet-api.algonode.cloud` |
+| `INDEXER_MAINNET_URL` | MainNet | `https://mainnet-idx.algonode.cloud` |
+| `ALGOD_TESTNET_URL` | TestNet | `https://testnet-api.algonode.cloud` |
+| `INDEXER_TESTNET_URL` | TestNet | `https://testnet-idx.algonode.cloud` |
+| `ALGOD_LOCALNET_URL` | LocalNet (`ai-economy-sdk`) | `http://localhost:4001` |
+| `INDEXER_LOCALNET_URL` | LocalNet (`ai-economy-sdk`) | `http://localhost:8980` |
+
+You can also pass endpoints directly: `paid_mcp_session(..., algod_url=..., algod_token=...)`, `DefaultAvmSigner(key, algod_client=...)`, `ChainReader(indexer_url)` in Python, and `algodClient(network, url, token)` in JavaScript.
+
+## Private networks
+
+For a private or consortium network, register it once at start-up. Registration needs the full genesis hash, because the 32-character id cannot be turned back into a hash. The simplest way is to read it from the network's algod.
+
+<CodeGroup>
+```python ai-economy-sdk
+from algosdk.v2client import algod
+from ai_economy_sdk import network_from_algod, register_network
+
+# Read the genesis hash and id from a node, register the network, get its CAIP-2 id
+node = algod.AlgodClient(token, "http://node.private.lan:4001")
+network_id = network_from_algod(node)
+
+# Or register from the full 44-character genesis hash (bare or as "algorand:<hash>")
+register_network(
+    "algorand:mFgazF+2uRS1tMiL9dsj01hJGySEmPN28B/TjjvpVW0=",
+    genesis_id="my-private-net-v1",
+    algod_url="http://node.private.lan:4001",
+    indexer_url="http://indexer.private.lan:8980",
+)
+```
+
+```python x402-algorand
+from x402_algorand import register_network
+
+network_id = register_network(
+    genesis_hash="mFgazF+2uRS1tMiL9dsj01hJGySEmPN28B/TjjvpVW0=",
+    genesis_id="privatenet-v1",
+    algod_url="http://node.internal:4001",
+    indexer_url="http://node.internal:8980",
+)
+# 'algorand:mFgazF-2uRS1tMiL9dsj01hJGySEmPN2'
+```
+</CodeGroup>
+
+`network_from_algod` registers the network with the default LocalNet URLs, so pass your node explicitly where the SDK takes one: `DefaultAvmSigner(key, algod_client=node)` on the server and `paid_mcp_session(..., algod_url=..., algod_token=...)` on the client.
+
+In JavaScript, nothing needs registering: create a client with `algodClient(networkId, url, token)` and `payForRequirement` reads the network from that node.

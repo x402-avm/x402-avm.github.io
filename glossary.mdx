@@ -1,0 +1,80 @@
+---
+title: "Glossary"
+description: "Terms used across the x402-avm documentation."
+---
+
+## x402
+
+An open payment protocol that uses HTTP status `402 Payment Required` to sell a resource per request. The server describes the price in a `PAYMENT-REQUIRED` header, the client answers with a signed payment in `PAYMENT-SIGNATURE`, and the server reports settlement in `PAYMENT-RESPONSE`. See [x402.org](https://www.x402.org).
+
+## Exact scheme
+
+The x402 payment scheme where the client pays exactly the requested amount of one asset to one address. `x402-algorand` implements it for Algorand; the facilitator rejects any amount that differs from the requirement.
+
+## CAIP-2
+
+A chain-agnostic format for network ids, `namespace:reference`. Under the Algorand profile the reference is the first 32 characters of the URL-safe base64 genesis hash, for example `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` for MainNet. See [Networks](/networks#caip-2-network-ids).
+
+## Resource server
+
+The service that sells something: an MCP server wrapped with `PaymentGate`, or an HTTP API protected by the `x402` middleware. It turns a request into payment requirements and delegates verification and settlement to a facilitator.
+
+## Facilitator
+
+The component that verifies a payment (structure, signature, simulation) and settles it (signs the fee payer transaction, submits the group, waits for confirmation). `PaymentGate` runs one in process.
+
+## Fee payer
+
+An account run by the service that pays the network fees for the payment group, so the buyer pays only the price. Its transaction is a 0-amount payment to itself with a fee that covers the whole group.
+
+## Atomic group
+
+Up to 16 Algorand transactions submitted together with a shared group id. Either all of them are committed or none is.
+
+## ASA
+
+Algorand Standard Asset: a token on Algorand, such as USDC. An account must opt in to an ASA before it can hold it.
+
+## microALGO
+
+The smallest unit of ALGO. 1 ALGO is 1,000,000 microALGO. ALGO prices are given in microALGO.
+
+## Base units
+
+The integer unit an asset's amounts are expressed in: microALGO for ALGO, and 10<sup>-6</sup> USDC for USDC (6 decimals). Prices and `amount` fields are always in base units.
+
+## Genesis hash
+
+The 32-byte hash of a network's genesis block. Every transaction carries it, so a transaction signed for one network is invalid on another.
+
+## MBR
+
+Minimum balance requirement. Every Algorand account must keep 0.1 ALGO, plus 0.1 ALGO for each asset it has opted in to.
+
+## MCP
+
+[Model Context Protocol](https://modelcontextprotocol.io): an open protocol through which AI applications discover and call tools. `ai-economy-sdk` gates MCP tool calls served over SSE.
+
+## Identity proof
+
+A signature that proves which address a caller controls, without paying. Either an `X-Identity-Txn` header (a zero-fee self-payment that can never execute) or the legacy `x-sender-*` headers. See [Identity](/ai-economy-sdk/identity).
+
+## Pass
+
+A prepaid on-chain payment to a vendor with the note `x402-pass:<scope>`. While it is valid (30 days by default), the vendor's gate charges the holder 0 for tools in that scope. See [Passes](/ai-economy-sdk/passes).
+
+## Settle-on-success
+
+`PaymentGate` submits the payment only after the tool succeeds. A failed tool call is never charged.
+
+## Settlement
+
+Submitting the signed group to the network and waiting for confirmation.
+
+## Simulate
+
+An algod feature (`/v2/transactions/simulate`) that evaluates a group against the current ledger without committing it. The facilitator simulates every group during verification, with empty signatures allowed.
+
+## Spend controls
+
+Client-side limits in the official `x402` client: which assets may be paid and the maximum amount per payment. By default only ALGO and USDC are allowed, up to 1,000,000 base units per payment. See [Guardrails](/agents/guardrails).

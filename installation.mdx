@@ -1,0 +1,119 @@
+---
+title: "Installation"
+description: "Install ai-economy-sdk, x402-algorand and x402-avm-js, and set up Algorand LocalNet for development."
+---
+
+## Requirements
+
+| Package | Registry | Version | Licence | Runtime |
+|---|---|---|---|---|
+| `ai-economy-sdk` | [PyPI](https://pypi.org/project/ai-economy-sdk/) | 0.4.0 | MIT | Python 3.10+ |
+| `x402-algorand` | [PyPI](https://pypi.org/project/x402-algorand/) | 0.2.0 | Apache-2.0 (with NOTICE) | Python 3.10+ |
+| `x402-avm-js` | [npm](https://www.npmjs.com/package/x402-avm-js) | 0.3.0 | MIT | Node.js 18+, browsers, workers |
+
+`x402-algorand` is derived from GoPlausible's `x402-avm` 2.0.2 and plugs into the official `x402` Python SDK (`x402>=2.28,<3`) maintained by the x402 Foundation.
+
+## Python
+
+Installing `ai-economy-sdk` also installs `x402-algorand`, the official `x402` package, FastMCP, the MCP SDK, `py-algorand-sdk`, httpx, Starlette, FastAPI and uvicorn.
+
+<CodeGroup>
+```bash pip
+pip install ai-economy-sdk==0.4.0
+```
+
+```bash uv
+uv pip install ai-economy-sdk==0.4.0
+```
+</CodeGroup>
+
+If you only need the payment scheme for the `x402` SDK (an HTTP API, a facilitator, or a client), install `x402-algorand` on its own:
+
+<CodeGroup>
+```bash pip
+pip install x402-algorand==0.2.0
+```
+
+```bash uv
+uv pip install x402-algorand==0.2.0
+```
+</CodeGroup>
+
+The official SDK's framework integrations need their extras, for example `pip install "x402[flask]"` for the Flask middleware.
+
+## JavaScript and TypeScript
+
+`x402-avm-js` is an ES module with one runtime dependency, `algosdk` (v3). Install `algosdk` alongside it so you can create clients and sign transactions.
+
+<CodeGroup>
+```bash npm
+npm install x402-avm-js@0.3.0 algosdk
+```
+
+```bash pnpm
+pnpm add x402-avm-js@0.3.0 algosdk
+```
+
+```bash yarn
+yarn add x402-avm-js@0.3.0 algosdk
+```
+</CodeGroup>
+
+The package uses only standard web APIs (`Uint8Array`, `TextEncoder`, `TextDecoder`) and no Node built-ins such as `Buffer`, so it runs in browsers, Node.js, workers and edge runtimes without polyfills.
+
+## LocalNet
+
+For development, run a private Algorand network with [AlgoKit](https://github.com/algorandfoundation/algokit-cli) (requires Docker):
+
+```bash
+algokit localnet start
+```
+
+| Service | URL | Token |
+|---|---|---|
+| algod | `http://localhost:4001` | `aaaa...` (64 × `a`) |
+| indexer | `http://localhost:8980` | none |
+| KMD | `http://localhost:4002` | `aaaa...` (64 × `a`) |
+
+Check that algod answers:
+
+```bash
+curl -s -H "X-Algo-API-Token: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  http://localhost:4001/v2/status | grep last-round
+```
+
+More on LocalNet, including how its network id is derived: [LocalNet guide](/guides/networks/localnet).
+
+## Verify the installation
+
+<CodeGroup>
+```bash Python
+python -c '
+import x402, x402_algorand
+from ai_economy_sdk import AIEconomySDK, PaymentGate, paid_mcp_session
+print("x402 version:", x402.__version__)
+print("Imports verified successfully")
+'
+```
+
+```bash Node.js
+node --input-type=module -e "import { resolveNetwork } from 'x402-avm-js'; console.log(resolveNetwork('mainnet'))"
+```
+</CodeGroup>
+
+Expected output (the `x402` version is the one pip resolved, 2.28 or later):
+
+```text
+x402 version: 2.28.0
+Imports verified successfully
+```
+
+```text
+algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k
+```
+
+## Next steps
+
+- [Quickstart](/quickstart): run a paid tool on LocalNet.
+- [How it works](/how-it-works): the payment flow in detail.
+- [Networks](/networks): network names, CAIP-2 ids and endpoints.

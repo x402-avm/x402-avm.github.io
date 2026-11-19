@@ -1,0 +1,139 @@
+---
+title: "LocalNet"
+description: "Develop and test paid tools on a private Algorand network with AlgoKit LocalNet."
+---
+
+LocalNet is a private Algorand network that runs in Docker on your machine. Transactions confirm in seconds, accounts are funded from a built-in dispenser, and nothing costs real money. All examples in the [examples repository](https://github.com/x402-avm/examples) that settle payments run on LocalNet.
+
+## Start and manage LocalNet
+
+```bash
+algokit localnet start    # start the containers
+algokit localnet status   # show service status
+algokit localnet reset    # wipe the chain and start again
+algokit localnet stop     # stop the containers
+```
+
+| Service | URL | Token |
+|---|---|---|
+| algod | `http://localhost:4001` | 64 × `a` |
+| indexer | `http://localhost:8980` | none |
+| KMD | `http://localhost:4002` | 64 × `a` |
+
+The SDKs use these endpoints by default when you pass `network="localnet"`. In Python you can move them with `ALGOD_LOCALNET_URL` and `INDEXER_LOCALNET_URL`. In JavaScript, `LOCALNET_ENDPOINTS` holds the defaults and `algodClient("localnet")` returns a client for them.
+
+## The LocalNet network id
+
+LocalNet's genesis hash is created when the network is created, so its CAIP-2 id is different on every machine and changes after `algokit localnet reset`. Never hard-code it. Read it from algod:
+
+<CodeGroup>
+```python Python
+from algosdk.v2client import algod
+from ai_economy_sdk import resolve_network
+
+local = algod.AlgodClient("a" * 64, "http://localhost:4001")
+print(resolve_network("localnet", local))  # algorand:<32 characters>
+```
+
+```ts JavaScript
+import { algodClient, networkFromAlgod } from 'x402-avm-js';
+
+console.log(await networkFromAlgod(algodClient('localnet')));
+```
+</CodeGroup>
+
+`PaymentGate`, `AIEconomySDK` and `paid_mcp_session` do this for you when given `network="localnet"`: they ask the signer's (or session's) algod for its genesis hash and register the network.
+
+<Warning>
+  After `algokit localnet reset`, restart your servers. A running server keeps the old network id and rejects payments signed for the new chain with `invalid_exact_avm_payload_genesis_hash_mismatch`.
+</Warning>
+
+## Fund test accounts
+
+LocalNet's KMD holds a funded wallet named `unencrypted-default-wallet`. The examples use this helper to create and fund fresh accounts:
+
+{/* example: localnet/_localnet.py */}
+
+```python localnet/_localnet.py
+"""LocalNet helper for doc examples: funds test accounts using LocalNet's KMD dispenser."""
+from algosdk import account, kmd, transaction
+from algosdk.v2client import algod
+
+ALGOD_URL = "http://localhost:4001"
+ALGOD_TOKEN = "a" * 64
+KMD_URL = "http://localhost:4002"
+KMD_TOKEN = "a" * 64
+INDEXER_URL = "http://localhost:8980"
+
+ALGOD = algod.AlgodClient(ALGOD_TOKEN, ALGOD_URL)
+
+
+def dispenser() -> tuple[str, str]:
+    """Retrieve the primary funded account from LocalNet's default unencrypted KMD wallet."""
+    k = kmd.KMDClient(KMD_TOKEN, KMD_URL)
+    w = next(x for x in k.list_wallets() if x["name"] == "unencrypted-default-wallet")
+    h = k.init_wallet_handle(w["id"], "")
+    addr = max(k.list_keys(h), key=lambda a: ALGOD.account_info(a)["amount"])
+    return addr, k.export_key(h, "", addr)
+
+
+def new_funded_account(algos: int = 10) -> tuple[str, str]:
+    """Generate a new account and fund it with the specified amount of ALGO from the dispenser."""
+    sk, addr = account.generate_account()
+    d_addr, d_sk = dispenser()
+    sp = ALGOD.suggested_params()
+    txn = transaction.PaymentTxn(d_addr, sp, addr, algos * 1_000_000)
+    ALGOD.send_transaction(txn.sign(d_sk))
+    transaction.wait_for_confirmation(ALGOD, txn.get_txid(), 10)
+    return sk, addr
+```
+
+<sub>Source: [examples/localnet/_localnet.py](https://github.com/x402-avm/examples/blob/main/localnet/_localnet.py)</sub>
+
+{/* /example */}
+
+`new_funded_account(algos=10)` returns `(private_key, address)` for a new account holding 10 ALGO. The JavaScript examples do the same with `algosdk.Kmd` (see `fundFromKmd` in [localnet/js_pay.mjs](https://github.com/x402-avm/examples/blob/main/localnet/js_pay.mjs)).
+
+## Assets on LocalNet
+
+LocalNet has no USDC. Price tools in ALGO (`asset_id=0`) while developing, or create your own ASA. A custom ASA is not one of the `x402` client's default assets, so a client must allow it explicitly:
+
+```python
+async with paid_mcp_session(
+    sse_url, buyer_sk, "localnet",
+    spend_controls={"allowed_assets": [
+        {"network": local_network_id, "asset": str(my_asa_id), "max_amount_per_payment": "5000000"}
+    ]},
+) as session:
+    ...
+```
+
+Both the vendor's `pay_to` account and the buyer must opt in to the ASA. See [Guardrails](/agents/guardrails#allow-another-asa).
+
+## Examples that run on LocalNet
+
+From the root of the [examples repository](https://github.com/x402-avm/examples), install the dependencies once and run all LocalNet examples in order (the script starts and stops the servers they need):
+
+```bash
+pip install -r requirements.txt
+npm install
+bash scripts/run_all_localnet.sh
+```
+
+Or run one at a time, for example `python localnet/quickstart_server.py`.
+
+| Example | What it shows |
+|---|---|
+| [`localnet/quickstart_server.py`](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_server.py) and [`quickstart_client.py`](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_client.py) | A paid MCP tool and a paying client ([Quickstart](/quickstart)) |
+| [`localnet/pricing.py`](https://github.com/x402-avm/examples/blob/main/localnet/pricing.py) | Per-tool, dynamic and bulk-discount prices ([Pricing](/ai-economy-sdk/pricing)) |
+| [`localnet/passes.py`](https://github.com/x402-avm/examples/blob/main/localnet/passes.py) | Buying a pass and calling for free ([Passes](/ai-economy-sdk/passes)) |
+| [`localnet/failed_call_not_charged.py`](https://github.com/x402-avm/examples/blob/main/localnet/failed_call_not_charged.py) | A failing tool costs nothing ([Settlement](/ai-economy-sdk/settlement)) |
+| [`localnet/identity.py`](https://github.com/x402-avm/examples/blob/main/localnet/identity.py) | Identity proofs ([Identity](/ai-economy-sdk/identity)) |
+| [`localnet/fastapi_paywall.py`](https://github.com/x402-avm/examples/blob/main/localnet/fastapi_paywall.py), [`flask_paywall.py`](https://github.com/x402-avm/examples/blob/main/localnet/flask_paywall.py), [`httpx_client.py`](https://github.com/x402-avm/examples/blob/main/localnet/httpx_client.py) | HTTP paywalls with the official `x402` middleware |
+| [`localnet/manual_flow.py`](https://github.com/x402-avm/examples/blob/main/localnet/manual_flow.py) | Verify and settle by hand ([AVM exact scheme](/x402-algorand/avm-exact-scheme)) |
+| [`localnet/js_pay.mjs`](https://github.com/x402-avm/examples/blob/main/localnet/js_pay.mjs) with [`localnet/server_for_js.py`](https://github.com/x402-avm/examples/blob/main/localnet/server_for_js.py) | Paying from Node with `x402-avm-js` |
+| [`localnet/paid_mcp_tool/`](https://github.com/x402-avm/examples/tree/main/localnet/paid_mcp_tool), [`localnet/browser_paywall/`](https://github.com/x402-avm/examples/tree/main/localnet/browser_paywall) | The [tutorials](/tutorials/index) |
+
+## Next
+
+When your tool works on LocalNet, move to [TestNet](/guides/networks/testnet) to run against a public network with free funds.

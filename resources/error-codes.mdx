@@ -1,0 +1,58 @@
+---
+title: "Error codes"
+description: "Every verification and settlement failure reason of the Algorand exact scheme, and the errors raised by ai-economy-sdk and the x402 client."
+---
+
+## Facilitator error codes
+
+When `ExactAvmFacilitatorScheme.verify()` rejects a payment, it returns `VerifyResponse(is_valid=False)` with `invalid_reason` set to one of these strings; `settle()` returns them in `error_reason`. The constants are defined in `x402_algorand.constants`. The order in which checks run is on [AVM exact scheme](/x402-algorand/avm-exact-scheme#verification-steps).
+
+| Code | Constant | Meaning and typical cause | Fix |
+|---|---|---|---|
+| `unsupported_scheme` | `ERR_UNSUPPORTED_SCHEME` | The accepted or required scheme is not `exact`. | Use scheme `"exact"`. |
+| `network_mismatch` | `ERR_NETWORK_MISMATCH` | The network in the client's `accepted` requirement differs from the server's requirement. | Pay the offer as given; do not rewrite its network. |
+| `invalid_exact_avm_payload_empty_group` | `ERR_EMPTY_GROUP` | `paymentGroup` is missing or empty. | Send the whole group in `payload.paymentGroup`. |
+| `invalid_exact_avm_payload_group_too_large` | `ERR_GROUP_TOO_LARGE` | More than 16 transactions. | Algorand groups hold at most 16 transactions. |
+| `invalid_exact_avm_payload_payment_index` | `ERR_INVALID_PAYMENT_INDEX` | `paymentIndex` is outside the group. | Point `paymentIndex` at the buyer's payment (1 with a fee payer, 0 without). |
+| `invalid_exact_avm_payload_group_decode_failed` | `ERR_GROUP_DECODE_FAILED` | A transaction is not valid base64 msgpack. | Encode each transaction with msgpack, then base64. |
+| `invalid_exact_avm_payload_missing_group_id` | `ERR_MISSING_GROUP_ID` | A multi-transaction group has a transaction without a group id. | Assign the group id to every transaction before signing. |
+| `invalid_exact_avm_payload_group_id_mismatch` | `ERR_INVALID_GROUP_ID` | Transactions carry different group ids. | Compute the group id over the final transactions, then sign. |
+| `invalid_exact_avm_payload_genesis_hash_mismatch` | `ERR_GENESIS_HASH_MISMATCH` | A transaction was built for another network than the requirement's. | Use an algod on the requirement's network. |
+| `invalid_exact_avm_payload_close_to_detected` | `ERR_CLOSE_TO_DETECTED` | A transaction sets `close_remainder_to` or `asset_close_to`. | Remove close-out fields. |
+| `invalid_exact_avm_payload_blocked_transaction_type` | `ERR_BLOCKED_TXN_TYPE` | A transaction is a key registration (`keyreg`). | Remove it from the group. |
+| `invalid_exact_avm_payload_rekey_detected` | `ERR_REKEY_DETECTED` | A rekey that is not undone within the group. | Remove `rekey_to`. |
+| `invalid_exact_avm_payload_asset_id_mismatch` | `ERR_INVALID_ASSET_ID` | Wrong transaction type for the asset (`pay` for ALGO, `axfer` for an ASA) or wrong ASA. | Pay the asset in `requirements.asset`. |
+| `invalid_exact_avm_payload_recipient_mismatch` | `ERR_RECIPIENT_MISMATCH` | The receiver is not `payTo`. | Pay the `payTo` from the challenge. |
+| `invalid_exact_avm_payload_amount_insufficient` | `ERR_AMOUNT_INSUFFICIENT` | The amount differs from the required amount (it must be equal). `invalid_message` shows both. | Pay exactly `requirements.amount`. |
+| `invalid_exact_avm_payload_missing_signature` | `ERR_MISSING_SIGNATURE` | The buyer's payment is unsigned. | Sign the transaction at `paymentIndex`. |
+| `invalid_exact_avm_payload_invalid_signature` | `ERR_INVALID_SIGNATURE` | The Ed25519 signature does not verify, for example a wrong key or a transaction changed after signing. | Sign with the sender's key after the group id is set. |
+| `invalid_exact_avm_payload_fee_payer_transferring_funds` | `ERR_FEE_PAYER_TRANSFERRING` | The buyer's payment is sent from one of the facilitator's own addresses. | Use a buyer account different from the fee payer. |
+| `fee_payer_not_managed_by_facilitator` | `ERR_FEE_PAYER_NOT_MANAGED` | `extra.feePayer` is not an address this facilitator signs for. | Use the fee payer the server advertised. |
+| `invalid_exact_avm_payload_missing_fee_payer` | `ERR_FEE_PAYER_MISSING` | The requirement names a fee payer but no transaction in the group is from it. | Include the fee payer's transaction (index 0). |
+| `invalid_exact_avm_payload_fee_payer_transaction_invalid` | `ERR_FEE_PAYER_INVALID_TXN` | The fee payer transaction is not a `pay` from the fee payer to itself, or its fee is above 16,000 microALGO. | Build it as a 0-amount self-payment with the pooled fee. |
+| `invalid_exact_avm_payload_fee_payer_has_amount` | `ERR_FEE_PAYER_HAS_AMOUNT` | The fee payer transaction moves ALGO. | Set its amount to 0. |
+| `invalid_exact_avm_payload_fee_payer_has_close_to` | `ERR_FEE_PAYER_HAS_CLOSE` | The fee payer transaction sets `close_remainder_to`. | Remove it. |
+| `invalid_exact_avm_payload_fee_payer_has_rekey_to` | `ERR_FEE_PAYER_HAS_REKEY` | The fee payer transaction sets `rekey_to`. | Remove it. |
+| `transaction_simulation_failed` | `ERR_SIMULATION_FAILED` | algod's simulation rejected the group: insufficient balance, an account below its minimum balance, a missing ASA opt-in, expired rounds. The node's message is in `invalid_message`. | Fund or opt in the account named in the message; rebuild with fresh parameters. |
+| `transaction_failed` | `ERR_TRANSACTION_FAILED` | Settlement: submitting or confirming the group failed. | Check algod, the fee payer's balance and the validity rounds; the buyer can pay again. |
+
+Three constants are defined for compatibility but not returned by the 0.2.0 facilitator: `invalid_exact_avm_payload` (`ERR_INVALID_PAYLOAD`), `invalid_exact_avm_payload_transaction_decode_failed` (`ERR_TXN_DECODE_FAILED`) and `invalid_exact_avm_payload_transaction_type` (`ERR_INVALID_TXN_TYPE`). A wrong transaction type is reported as `invalid_exact_avm_payload_asset_id_mismatch`.
+
+## ai-economy-sdk errors
+
+| Where | Error | Cause |
+|---|---|---|
+| `PaymentGate(...)` | `ValueError: price <n> for tool '<tool>' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True` | A fixed ALGO price in `(0, 2000]`. See [the fee floor](/ai-economy-sdk/pricing#the-fee-floor). |
+| Tool call | `402` with `{"error": "Replay detected"}` | The same signed payment was presented again. |
+| Tool call | `ToolError: payment settlement failed: <reason>` | The tool succeeded but the payment could not be settled; the buyer was not charged and gets no result. |
+| Tool call | MCP result with `isError=True` | The tool failed; the payment was discarded. |
+| `register_network(...)` | `ValueError: pass the genesis hash or use network_from_algod` | A 32-character id of an unknown network; registration needs the full genesis hash. |
+
+## Client errors
+
+| Where | Error | Cause |
+|---|---|---|
+| `x402Client` / `paid_mcp_session` | `NoMatchingRequirementsError` | No offer passes the spend controls and policies, or none is for a registered network. |
+| `ExactAvmClientScheme.create_payment_payload` | `ValueError: algod is on <id> but the payment is for <id>` | The client's algod is on another network than the offer. |
+| `x402-avm-js` `selectRequirement` / `payForRequirement` | `Error: The server asks for payment on <ids>, but this wallet is on <id>` | No `exact` offer for the algod's network. |
+| `x402-avm-js` `resolveNetwork` | `Error: Unknown network "<name>"` | Not an alias or CAIP-2 id; for LocalNet use `networkFromAlgod`. |

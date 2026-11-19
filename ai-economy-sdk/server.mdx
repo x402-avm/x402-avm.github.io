@@ -1,0 +1,173 @@
+---
+title: "Server"
+description: "Gate a FastMCP server's tools with PaymentGate or AIEconomySDK and serve it with uvicorn."
+---
+
+## Prerequisites
+
+- Python 3.10 or newer, with `ai-economy-sdk` installed.
+- An Algorand account to act as fee payer (its private key signs the fee transaction of each payment group).
+- An algod endpoint for your network (LocalNet, TestNet or MainNet).
+
+## Wrap a FastMCP server with PaymentGate
+
+`PaymentGate` intercepts MCP `tools/call` requests. When a call has a price above 0 and carries no valid payment, it answers `402` with the payment requirements.
+
+```python
+from algosdk.v2client import algod
+from fastmcp import FastMCP
+from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+
+algod_client = algod.AlgodClient("a" * 64, "http://localhost:4001")
+signer = DefaultAvmSigner(server_private_key, algod_client=algod_client)
+
+mcp = FastMCP("ServiceServer")
+
+@mcp.tool()
+def echo(text: str) -> str:
+    """Return text back to the caller."""
+    return f"echo: {text}"
+
+gate = PaymentGate(
+    signer=signer,
+    network="localnet",
+    pay_to=server_address,
+    asset_id=0,
+    prices={"echo": 5000},
+)
+
+app = gate.wrap(mcp)  # ASGI app
+```
+
+Serve `app` with any ASGI server, for example `uvicorn.run(app, host="127.0.0.1", port=9201)`. MCP clients connect to `http://127.0.0.1:9201/sse`.
+
+### Constructor parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `signer` | required | Signer for the fee payer account, usually `DefaultAvmSigner(private_key, algod_client=...)`. Its algod client is also used to resolve `"localnet"`. |
+| `network` | required | `"mainnet"`, `"testnet"`, `"localnet"` or a CAIP-2 id. |
+| `pay_to` | required | Address that receives payments. |
+| `asset_id` | `0` | `0` for ALGO, or an ASA id such as USDC. |
+| `prices` | `None` | `dict` of tool name to price, or a callable `(tool, args, sender) -> int`. |
+| `default_price` | `0` | Price for tools not in `prices`. 0 means free. |
+| `chain` | `None` | `ChainReader` for indexer lookups (passes, subscriptions, bulk discounts). |
+| `pass_scopes` | `None` | `dict` of pass scope to minimum price. See [Passes](/ai-economy-sdk/passes). |
+| `pass_days` | `30.0` | How long a pass stays valid. |
+| `subscription_asset_id` | `None` | ASA whose recent holders call for free. |
+| `subscription_max_age_days` | `30.0` | How recently the subscription token must have been received. |
+| `subscription_issuer` | `None` | Only count subscription tokens received from this address. |
+| `bulk_threshold` | `None` | Past spend (base units) above which the bulk discount applies. |
+| `bulk_discount` | `0.5` | Multiplier applied to the price for bulk callers. |
+| `bulk_days` | `30` | Look-back window for past spend. |
+| `min_fee_per_txn` | `1000` | Network minimum fee; the fee floor is twice this. |
+| `allow_loss` | `False` | Allow ALGO prices at or below the fee floor. |
+| `replay_db` | `None` | SQLite path for a replay store shared by several processes. |
+| `replay_cache_size` | `5000` | Documented as the in-memory replay cache size; the 0.4.0 replay store does not read it. |
+
+Every parameter, with types: [`PaymentGate` reference](/reference/python/ai-economy-sdk/payment-gate).
+
+### What wrap() adds
+
+1. **`GateMiddleware`**, an ASGI middleware. `GET /sse` and non-tool MCP messages pass through. For `POST /messages*` with a `tools/call` body it reads the caller's identity, computes the price and either passes the request through (price 0), answers `402`, or verifies the attached payment and reserves it against replay.
+2. **`SettleOnSuccessMiddleware`**, a FastMCP middleware. After the tool returns, it settles the reserved payment if the tool succeeded and releases it otherwise.
+
+## Decorator-based setup with AIEconomySDK
+
+`AIEconomySDK` bundles a FastMCP server and a `PaymentGate`. You register tools with a price function, then build the ASGI app.
+
+```python
+from ai_economy_sdk import AIEconomySDK, DefaultAvmSigner
+
+sdk = AIEconomySDK(
+    server_signer=DefaultAvmSigner(server_private_key, algod_client=algod_client),
+    network="localnet",
+    asset_id=0,
+    pay_to_address=server_address,
+    name="DecoratedServer",
+)
+
+@sdk.add_tool(name="analyze", description="Analyze input data", pricing_func=lambda args, sender: 10_000)
+def analyze(data: str) -> str:
+    return f"analyzed: {data}"
+
+app = sdk.build_app()
+```
+
+`pricing_func` receives the tool arguments and the caller's verified address (or `None`). A function that accepts only `args` also works. See the [`AIEconomySDK` reference](/reference/python/ai-economy-sdk/ai-economy-sdk).
+
+## Complete example
+
+{/* example: localnet/quickstart_server.py */}
+
+```python localnet/quickstart_server.py expandable
+"""FastMCP server payment-gated with ai-economy-sdk on Algorand LocalNet.
+
+Runs a FastMCP server with a single paid 'echo' tool priced at 5,000 microALGO.
+Funds a server account from LocalNet dispenser and serves SSE requests on port 9201.
+
+How to run:
+    python localnet/quickstart_server.py
+
+What it prints:
+    pay_to: <44-character Algorand address>
+"""
+import sys
+from pathlib import Path
+
+# Add current directory to path so _localnet can be imported
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import uvicorn
+from fastmcp import FastMCP
+from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+from _localnet import ALGOD, new_funded_account
+
+SERVER_PORT = 9201
+TOOL_PRICE_MICROALGO = 5000
+
+
+def main() -> None:
+    server_sk, server_addr = new_funded_account(algos=10)
+    print(f"pay_to: {server_addr}", flush=True)
+
+    mcp = FastMCP("QuickstartServer")
+
+    @mcp.tool()
+    def echo(text: str) -> str:
+        """Echo back input text."""
+        return f"echo: {text}"
+
+    gate = PaymentGate(
+        signer=DefaultAvmSigner(server_sk, algod_client=ALGOD),
+        network="localnet",
+        pay_to=server_addr,
+        asset_id=0,
+        prices={"echo": TOOL_PRICE_MICROALGO},
+    )
+
+    app = gate.wrap(mcp)
+    uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<sub>Source: [examples/localnet/quickstart_server.py](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_server.py)</sub>
+
+{/* /example */}
+
+```bash
+python localnet/quickstart_server.py
+```
+
+```text
+pay_to: GL4IOGTXMILQYI2UOSYORNW4LHB4SULTDRYCA4AMFQUGKTEYN3ZUDQG6XE
+```
+
+## Next steps
+
+- [Client](/ai-economy-sdk/client): call this server.
+- [Pricing](/ai-economy-sdk/pricing): dynamic prices and the fee floor.
+- [Production](/ai-economy-sdk/production): keys, USDC and several workers.

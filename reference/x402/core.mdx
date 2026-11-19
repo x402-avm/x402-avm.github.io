@@ -1,0 +1,68 @@
+---
+title: "Core classes"
+description: "x402Client, x402ResourceServer and x402Facilitator from the official x402 Python SDK, as used with x402-algorand."
+---
+
+These classes come from the official [`x402`](https://github.com/x402-foundation/x402) package (`from x402 import ...`), version 2.28 or later. This page summarizes the members used with `x402-algorand`; signatures are taken from `x402` 2.28.0. The upstream project is the authoritative reference.
+
+Each class has a synchronous variant for WSGI and other sync code: `x402ClientSync`, `x402ResourceServerSync`, `x402FacilitatorSync`.
+
+## x402Client
+
+Selects a payment requirement from a `402` challenge, enforces spend controls and policies, and asks the registered scheme to create the payment.
+
+```python
+from x402 import x402Client
+```
+
+| Member | Signature | Description |
+|---|---|---|
+| constructor | `x402Client(payment_requirements_selector=None)` | Optional function that picks one requirement from the filtered list. |
+| `from_config` | `x402Client.from_config(config: x402ClientConfig)` | Build from `x402ClientConfig(schemes, policies=None, spend_controls=None, payment_requirements_selector=None)`. |
+| `register` | `register(network, client)` | Register a scheme for a network or pattern such as `"algorand:*"`. `register_exact_avm_client` calls this. |
+| `register_v1` | `register_v1(network, client)` | Register a scheme for an x402 v1 network name. |
+| `register_policy` | `register_policy(policy)` | Add a filter `(x402_version, requirements) -> requirements`. If every requirement is filtered out, payment creation raises `NoMatchingRequirementsError`. |
+| `set_spend_controls` | `set_spend_controls(controls)` | Replace spend controls; `False` disables them. |
+| `create_payment_payload` | `async create_payment_payload(payment_required, resource=None, extensions=None)` | Select a requirement and return a signed `PaymentPayload`. |
+
+Spend controls default to the assets the registered schemes recognize (ALGO and USDC for Algorand) with a cap of `DEFAULT_MAX_AMOUNT_PER_PAYMENT = "$1"`. See [Guardrails](/agents/guardrails#spend-controls-reference).
+
+## x402ResourceServer
+
+Turns route configuration into payment requirements and coordinates verification and settlement with facilitators.
+
+```python
+from x402 import x402ResourceServer
+```
+
+| Member | Signature | Description |
+|---|---|---|
+| constructor | `x402ResourceServer(facilitator_clients=None)` | One facilitator client or a list. An in-process `x402Facilitator` can be passed directly. |
+| `register` | `register(network, server)` | Register a server scheme. `register_exact_avm_server` calls this with `"algorand:*"`. |
+| `initialize` | `initialize()` | Fetch what the facilitators support. |
+| `build_payment_requirements` | `build_payment_requirements(config, extensions=None)` | Build the concrete, scheme-enhanced requirements for a route. |
+| `find_matching_requirements` | `find_matching_requirements(available, payload)` | Find which requirement a client's payload answers. |
+| `verify_payment` | `verify_payment(payload, requirements, ...)` | Verify through the facilitator. |
+| `settle_payment` | `settle_payment(payload, requirements, ...)` | Settle through the facilitator. |
+
+## x402Facilitator
+
+Verifies and settles payments with the registered scheme implementations.
+
+```python
+from x402 import x402Facilitator
+```
+
+| Member | Signature | Description |
+|---|---|---|
+| constructor | `x402Facilitator()` | |
+| `register` | `register(networks, facilitator)` | Register a scheme for a list of networks. `register_exact_avm_facilitator` calls this. |
+| `get_supported` | `get_supported()` | Supported schemes and networks, including scheme `extra` such as the Algorand fee payer address. |
+| `verify` | `verify(payload, requirements, payload_bytes=None, requirements_bytes=None)` | Returns a `VerifyResponse`. |
+| `settle` | `settle(payload, requirements, payload_bytes=None, requirements_bytes=None)` | Returns a `SettleResponse`. |
+
+## Related
+
+- [Schemas](/reference/x402/schemas)
+- [HTTP integration](/reference/x402/http)
+- [x402-algorand registration helpers](/reference/python/x402-algorand/register-exact-avm-client)

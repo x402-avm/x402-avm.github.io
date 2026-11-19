@@ -1,0 +1,117 @@
+---
+title: "Client"
+description: "Configure the official x402Client to answer Algorand 402 challenges with signed payments."
+---
+
+## Prerequisites
+
+- Python 3.10 or newer, with `x402-algorand` installed.
+- A funded Algorand account on the network you will pay on.
+
+## Implement a client signer
+
+The client needs a signer that implements [`ClientAvmSigner`](/reference/python/x402-algorand/client-avm-signer): an `address` and a method that signs the transactions at the given indexes of a group and returns `None` for the others.
+
+```python
+import base64
+from algosdk import account, encoding
+
+class MyClientSigner:
+    """Client signer holding an account's private key."""
+
+    def __init__(self, private_key: str):
+        self.private_key = private_key
+        self.address = account.address_from_private_key(private_key)
+
+    def sign_transactions(self, unsigned_txns: list[bytes], indexes: list[int]) -> list[bytes | None]:
+        signed = []
+        for i, txn_bytes in enumerate(unsigned_txns):
+            if i in indexes:
+                txn = encoding.msgpack_decode(base64.b64encode(txn_bytes).decode())
+                signed.append(base64.b64decode(encoding.msgpack_encode(txn.sign(self.private_key))))
+            else:
+                signed.append(None)
+        return signed
+```
+
+`DefaultAvmSigner(private_key, algod_client=...)` from `ai-economy-sdk` already implements this protocol.
+
+## Register the scheme
+
+```python
+from x402 import x402Client
+from x402_algorand.exact.register import register_exact_avm_client
+
+client = x402Client()
+register_exact_avm_client(
+    client,
+    MyClientSigner(my_private_key),
+    algod_url="http://localhost:4001",
+    algod_token="a" * 64,
+)
+```
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `networks` | `None` | Network ids to register. `None` registers the wildcard `algorand:*`. |
+| `policies` | `None` | x402 payment policies, registered with `client.register_policy`. |
+| `algod_url`, `algod_token` | `None` | The algod used to fetch suggested parameters. Without them the scheme uses the network's configured endpoint. |
+
+The helper also registers the scheme for the legacy x402 v1 network names (`algorand-mainnet`, `algorand-testnet`).
+
+## Pay a challenge by hand
+
+```python
+from x402.http import decode_payment_required_header, encode_payment_signature_header
+
+# 1. Decode the 402 response's header
+payment_required = decode_payment_required_header(response.headers["payment-required"])
+
+# 2. Pick a requirement and build the signed payload
+payment_payload = await client.create_payment_payload(payment_required)
+
+# 3. Retry with PAYMENT-SIGNATURE
+retry = await http_client.get(url, headers={"payment-signature": encode_payment_signature_header(payment_payload)})
+```
+
+To have this done for every request, wrap an HTTP client: see [HTTPX and requests](/x402-algorand/httpx-requests).
+
+## Spend controls
+
+`x402Client` checks every payment against spend controls before it creates one. `x402-algorand` tells the client which assets are Algorand defaults.
+
+- **Allowed by default:** ALGO (`"0"`) on every Algorand network, and USDC on MainNet (`"31566704"`) and TestNet (`"10458941"`).
+- **Default cap:** `$1` per payment (`DEFAULT_MAX_AMOUNT_PER_PAYMENT`), which is 1,000,000 base units for these 6-decimal assets: 1 ALGO or 1 USDC.
+- A requirement for another asset, or above the cap, raises `NoMatchingRequirementsError` and nothing is signed.
+
+```python
+# Allow another ASA with a cap in its base units
+client.set_spend_controls({
+    "allowed_assets": [
+        {"network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k", "asset": "12345678", "max_amount_per_payment": "5000000"}
+    ]
+})
+
+# Raise the cap for the default assets
+client.set_spend_controls({"max_amount_per_payment": "$10"})
+
+# Allow any asset (the cap still applies to default assets)
+client.set_spend_controls({"allowed_assets": True})
+
+# Turn spend controls off
+client.set_spend_controls(False)
+```
+
+`x402Client.__init__` takes only `payment_requirements_selector`. Set spend controls with `set_spend_controls(...)` or with `x402Client.from_config(x402ClientConfig(schemes=..., spend_controls=...))`.
+
+## What create_payment_payload builds
+
+1. It fetches suggested parameters from algod and checks that algod is on the requirement's network. If not, it raises `ValueError("algod is on <id> but the payment is for <id>")`.
+2. If the requirement has `extra.feePayer`, it builds two transactions: the fee payer's 0-amount self-payment with the pooled fee (unsigned), and your payment (`pay` for ALGO, `axfer` for an ASA) with fee 0, which your signer signs.
+3. Without a fee payer, it builds one payment with the normal fee, signed by you.
+4. Only signed transaction bytes leave the client; the private key never does.
+
+## Next steps
+
+- [HTTPX and requests](/x402-algorand/httpx-requests)
+- [AVM exact scheme](/x402-algorand/avm-exact-scheme)

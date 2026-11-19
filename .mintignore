@@ -1,0 +1,9 @@
+# Repository files that are not part of the published site
+scripts/
+README.md
+AGENTS.md
+LICENSE
+.github/
+node_modules/
+site/
+export.zip

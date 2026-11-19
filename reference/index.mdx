@@ -1,0 +1,35 @@
+---
+title: "API reference"
+sidebarTitle: "Overview"
+description: "Reference for every public object of ai-economy-sdk, x402-algorand and x402-avm-js, generated from the source."
+---
+
+<Columns cols={3}>
+  <Card title="ai-economy-sdk" icon="server" href="/reference/python/ai-economy-sdk/index">
+    `PaymentGate`, `AIEconomySDK`, `paid_mcp_session`, identity, network helpers. Python.
+  </Card>
+  <Card title="x402-algorand" icon="puzzle" href="/reference/python/x402-algorand/index">
+    Registration helpers, scheme classes, signer protocols, utilities, constants. Python.
+  </Card>
+  <Card title="x402-avm-js" icon="globe" href="/reference/js/index">
+    Payments, identity, networks and types. TypeScript.
+  </Card>
+</Columns>
+
+## How the reference is generated
+
+| Package | Source | Generator |
+|---|---|---|
+| `ai-economy-sdk` 0.4.0 | numpy-style docstrings | `scripts/gen_python_reference.py` (griffe, static analysis) |
+| `x402-algorand` 0.2.0 | Google-style docstrings | `scripts/gen_python_reference.py` |
+| `x402-avm-js` 0.3.0 | TSDoc in `src/index.ts` | `scripts/gen_js_reference.py` |
+
+Signatures, types and defaults come from the code; descriptions, return values, exceptions and examples come from the documentation comments. Each page links to the source line it was generated from. To regenerate, see the [site's README](https://github.com/x402-avm/x402-avm.github.io#regenerate-the-api-reference).
+
+## Official x402 SDK
+
+`x402-algorand` plugs into the official [`x402`](https://github.com/x402-foundation/x402) Python SDK. The classes you use from it are summarized under **x402 core (upstream)**: [core classes](/reference/x402/core), [schemas](/reference/x402/schemas) and [HTTP integration](/reference/x402/http). The upstream project is the authoritative reference for them.
+
+## Error codes
+
+Verification and settlement failure reasons are listed on [Error codes](/resources/error-codes).

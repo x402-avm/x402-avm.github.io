@@ -1,0 +1,218 @@
+---
+title: "Flask"
+description: "Protect Flask routes with the official x402 WSGI middleware and the Algorand scheme."
+---
+
+Flask is synchronous, so it uses the sync variants of the x402 classes: `x402FacilitatorSync` and `x402ResourceServerSync`, with `payment_middleware(app, routes, server)` from `x402.http.middleware.flask`. The middleware wraps `app.wsgi_app`.
+
+1. A request without payment to a protected route gets `402` with `PAYMENT-REQUIRED`.
+2. A request with a valid `PAYMENT-SIGNATURE` is verified and settled, and the route's response is returned with `PAYMENT-RESPONSE`.
+
+## Example
+
+This server protects `GET /weather` for 10,000 microALGO on LocalNet, port 9212.
+
+{/* example: localnet/flask_paywall.py */}
+
+```python localnet/flask_paywall.py expandable
+"""Flask payment wall example for x402 on Algorand LocalNet.
+
+Protects a GET /weather endpoint requiring a 10,000 microALGO (asset 0) payment.
+Uses the official x402 Flask middleware (PaymentMiddleware / payment_middleware)
+with x402ResourceServerSync and x402FacilitatorSync. The server acts as fee payer,
+sponsoring transaction fees so the buyer pays exactly 10,000 microALGO.
+
+How to run:
+    python localnet/flask_paywall.py
+
+What it prints:
+    Server initialization messages, funded server address, network CAIP-2 ID,
+    and server startup listening on http://127.0.0.1:9212.
+"""
+
+import base64
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from flask import Flask, jsonify
+from werkzeug.serving import run_simple
+from algosdk import account, encoding, kmd, transaction
+from algosdk.v2client import algod
+from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
+
+from x402 import x402FacilitatorSync, x402ResourceServerSync
+from x402.http.middleware.flask import payment_middleware
+from x402_algorand.exact.register import (
+    register_exact_avm_server,
+    register_exact_avm_facilitator,
+)
+from x402_algorand.utils import caip2_from_genesis_hash
+
+# 1. Connect to LocalNet Algod
+ALGOD_URL = "http://localhost:4001"
+ALGOD_TOKEN = "a" * 64
+algod_client = algod.AlgodClient(ALGOD_TOKEN, ALGOD_URL)
+
+sp = algod_client.suggested_params()
+network = caip2_from_genesis_hash(sp.gh)
+
+
+# 2. LocalNet dispenser helper to fund server account
+def dispenser():
+    k = kmd.KMDClient(ALGOD_TOKEN, "http://localhost:4002")
+    w = next(x for x in k.list_wallets() if x["name"] == "unencrypted-default-wallet")
+    h = k.init_wallet_handle(w["id"], "")
+    addr = max(k.list_keys(h), key=lambda a: algod_client.account_info(a)["amount"])
+    return addr, k.export_key(h, "", addr)
+
+
+def new_funded_account(algos: int = 10):
+    sk, addr = account.generate_account()
+    d_addr, d_sk = dispenser()
+    txn = transaction.PaymentTxn(d_addr, algod_client.suggested_params(), addr, algos * 1_000_000)
+    algod_client.send_transaction(txn.sign(d_sk))
+    transaction.wait_for_confirmation(algod_client, txn.get_txid(), 10)
+    return sk, addr
+
+
+# 3. Synchronous Facilitator AVM Signer
+class SyncServerAvmSigner:
+    """Server-side AVM signer for synchronous facilitator execution."""
+
+    def __init__(self, private_key: str, client: algod.AlgodClient):
+        self.private_key = private_key
+        self.address = account.address_from_private_key(private_key)
+        self.client = client
+
+    def get_addresses(self) -> list[str]:
+        return [self.address]
+
+    def sign_transaction(self, txn_bytes: bytes, fee_payer: str, network: str) -> bytes:
+        return self._sign_raw(txn_bytes)
+
+    def sign_group(
+        self, group_bytes: list[bytes], fee_payer: str, indexes: list[int], network: str
+    ) -> list[bytes]:
+        signed = list(group_bytes)
+        for i in indexes:
+            signed[i] = self._sign_raw(group_bytes[i])
+        return signed
+
+    def simulate_group(self, group_bytes: list[bytes], network: str):
+        decoded = [self._decode(b) for b in group_bytes]
+        req = SimulateRequest(
+            txn_groups=[SimulateRequestTransactionGroup(txns=decoded)],
+            allow_empty_signatures=True,
+        )
+        result = self.client.simulate_transactions(req)
+        txn_groups = result.get("txn-groups", [])
+        if txn_groups and txn_groups[0].get("failure-message"):
+            raise RuntimeError(txn_groups[0]["failure-message"])
+        return result
+
+    def send_group(self, group_bytes: list[bytes], network: str) -> str:
+        decoded = [self._decode(b) for b in group_bytes]
+        return self.client.send_transactions(decoded)
+
+    def confirm_transaction(self, txid: str, network: str, rounds: int = 4):
+        return transaction.wait_for_confirmation(self.client, txid, rounds)
+
+    def _decode(self, raw_bytes: bytes):
+        return encoding.msgpack_decode(base64.b64encode(raw_bytes).decode())
+
+    def _sign_raw(self, txn_bytes: bytes) -> bytes:
+        txn = self._decode(txn_bytes)
+        return base64.b64decode(encoding.msgpack_encode(txn.sign(self.private_key)))
+
+
+# Initialize funded server account
+server_sk, server_addr = new_funded_account(10)
+server_signer = SyncServerAvmSigner(server_sk, algod_client)
+
+# 4. Set up synchronous x402 Facilitator and Resource Server
+facilitator_sync = x402FacilitatorSync()
+register_exact_avm_facilitator(facilitator_sync, server_signer, network)
+
+resource_server_sync = x402ResourceServerSync(facilitator_sync)
+register_exact_avm_server(resource_server_sync)
+
+# 5. Define Flask application with official payment middleware
+app = Flask(__name__)
+
+routes = {
+    "GET /weather": {
+        "accepts": [
+            {
+                "scheme": "exact",
+                "price": {"amount": "10000", "asset": "0"},
+                "network": network,
+                "pay_to": server_addr,
+            }
+        ]
+    }
+}
+
+payment_middleware(app, routes, resource_server_sync)
+
+
+@app.route("/weather", methods=["GET"])
+def get_weather():
+    """Protected weather endpoint: returns current weather conditions."""
+    return jsonify({
+        "city": "Boston",
+        "temperature": 68,
+        "conditions": "sunny",
+        "network": network,
+    })
+
+
+if __name__ == "__main__":
+    print(f"Starting x402 Flask server on port 9212...")
+    print(f"Server address: {server_addr}")
+    print(f"Network: {network}")
+    print(f"Endpoint: GET http://127.0.0.1:9212/weather (cost: 10,000 microALGO)")
+    run_simple("127.0.0.1", 9212, app)
+```
+
+<sub>Source: [examples/localnet/flask_paywall.py](https://github.com/x402-avm/examples/blob/main/localnet/flask_paywall.py)</sub>
+
+{/* /example */}
+
+```bash
+pip install x402-algorand "x402[flask]"
+python localnet/flask_paywall.py
+```
+
+```text
+Starting x402 Flask server on port 9212...
+Server address: IRRY5AQCA52ZU36CTBWDLFEVXHKQQ6OGXWLFFC5XOBYI7VOO4NTIFSZZRM
+Network: algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY
+Endpoint: GET http://127.0.0.1:9212/weather (cost: 10,000 microALGO)
+ * Running on http://127.0.0.1:9212
+```
+
+In a second terminal, pay for it with the HTTPX client:
+
+```bash
+python localnet/httpx_client.py --url http://127.0.0.1:9212/weather
+```
+
+```text
+Buyer address: DW4IUNB6OZY43XWX33L4NOEDVWMGBCUJXKFNZGWSHQ6HDB7GIL3LVKRTSA
+Buyer initial balance: 5000000 microALGO
+Requesting GET http://127.0.0.1:9212/weather...
+Response status: 200
+Response body: {'city': 'Boston', 'conditions': 'sunny', 'network': 'algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY', 'temperature': 68}
+Buyer final balance: 4990000 microALGO
+Balance drop: 10000 microALGO
+Verification SUCCESS: Balance drop equals exactly 10,000 microALGO.
+```
+
+The buyer's balance fell by exactly the price: the server's account paid the fees.
+
+## Next steps
+
+- [HTTPX and requests](/x402-algorand/httpx-requests)
+- [Error codes](/resources/error-codes)

@@ -1,0 +1,385 @@
+---
+title: "Quickstart"
+description: "Run a paid MCP tool on Algorand LocalNet and pay for it from Python and from JavaScript."
+---
+
+In this quickstart you start a local Algorand network, run an MCP server whose `echo` tool costs 5,000 microALGO per call, and pay for calls from a Python client. A last step pays an x402 HTTP endpoint from JavaScript with `x402-avm-js`.
+
+Everything runs on LocalNet, so no real funds are involved. The scripts come from the [examples repository](https://github.com/x402-avm/examples) and fund their own accounts from the LocalNet dispenser.
+
+## Prerequisites
+
+- Python 3.10 or newer
+- Node.js 18 or newer (for the JavaScript step)
+- [AlgoKit](https://github.com/algorandfoundation/algokit-cli) and Docker, to run LocalNet
+
+<Steps>
+  <Step title="Start LocalNet">
+    ```bash
+    algokit localnet start
+    ```
+
+    This starts algod on `http://localhost:4001`, the indexer on `http://localhost:8980` and KMD on `http://localhost:4002`. The examples fund new accounts from KMD's `unencrypted-default-wallet`.
+  </Step>
+  <Step title="Get the examples and install the SDK">
+    ```bash
+    git clone https://github.com/x402-avm/examples.git
+    cd examples
+    python -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
+    npm install
+    ```
+
+    `requirements.txt` pins `ai-economy-sdk==0.4.0` and `x402-algorand==0.2.0` (which bring the official `x402` package, FastMCP and `py-algorand-sdk`), plus FastAPI, Flask and uvicorn for the HTTP examples. `npm install` installs `x402-avm-js` and `algosdk` for the JavaScript examples.
+  </Step>
+  <Step title="Run the paid MCP server">
+    The server funds a fresh account with 10 ALGO, wraps a FastMCP server with `PaymentGate`, and prices `echo` at 5,000 microALGO.
+
+    {/* example: localnet/quickstart_server.py */}
+
+    ```python localnet/quickstart_server.py expandable
+    """FastMCP server payment-gated with ai-economy-sdk on Algorand LocalNet.
+
+    Runs a FastMCP server with a single paid 'echo' tool priced at 5,000 microALGO.
+    Funds a server account from LocalNet dispenser and serves SSE requests on port 9201.
+
+    How to run:
+        python localnet/quickstart_server.py
+
+    What it prints:
+        pay_to: <44-character Algorand address>
+    """
+    import sys
+    from pathlib import Path
+
+    # Add current directory to path so _localnet can be imported
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+    import uvicorn
+    from fastmcp import FastMCP
+    from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+    from _localnet import ALGOD, new_funded_account
+
+    SERVER_PORT = 9201
+    TOOL_PRICE_MICROALGO = 5000
+
+
+    def main() -> None:
+        server_sk, server_addr = new_funded_account(algos=10)
+        print(f"pay_to: {server_addr}", flush=True)
+
+        mcp = FastMCP("QuickstartServer")
+
+        @mcp.tool()
+        def echo(text: str) -> str:
+            """Echo back input text."""
+            return f"echo: {text}"
+
+        gate = PaymentGate(
+            signer=DefaultAvmSigner(server_sk, algod_client=ALGOD),
+            network="localnet",
+            pay_to=server_addr,
+            asset_id=0,
+            prices={"echo": TOOL_PRICE_MICROALGO},
+        )
+
+        app = gate.wrap(mcp)
+        uvicorn.run(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning")
+
+
+    if __name__ == "__main__":
+        main()
+    ```
+
+    <sub>Source: [examples/localnet/quickstart_server.py](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_server.py)</sub>
+
+    {/* /example */}
+
+    ```bash
+    python localnet/quickstart_server.py
+    ```
+
+    It prints the address that receives payments and serves SSE on port 9201:
+
+    ```text
+    pay_to: GL4IOGTXMILQYI2UOSYORNW4LHB4SULTDRYCA4AMFQUGKTEYN3ZUDQG6XE
+    ```
+
+    The address is different on every run.
+  </Step>
+  <Step title="Call the tool from Python">
+    In a second terminal, run the client. It funds a buyer with 5 ALGO, opens a paid session, calls `echo`, and measures the buyer's balance before and after.
+
+    {/* example: localnet/quickstart_client.py */}
+
+    ```python localnet/quickstart_client.py
+    """Paid MCP client session using ai-economy-sdk on Algorand LocalNet.
+
+    Funds a fresh buyer account via the LocalNet dispenser, establishes a paid MCP
+    session to http://127.0.0.1:9201/sse, calls the 'echo' tool, and verifies the on-chain
+    charge.
+
+    How to run:
+        1. Start quickstart_server.py in the background
+        2. python localnet/quickstart_client.py
+
+    What it prints:
+        Result: echo: hello world
+        Balance drop: 5000 microALGO
+    """
+    import asyncio
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+    from ai_economy_sdk import paid_mcp_session
+    from _localnet import ALGOD, new_funded_account
+
+    SERVER_URL = "http://127.0.0.1:9201/sse"
+
+
+    async def main() -> None:
+        buyer_sk, buyer_addr = new_funded_account(algos=5)
+        before_balance = ALGOD.account_info(buyer_addr)["amount"]
+
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            result = await session.call_tool("echo", {"text": "hello world"})
+            output_text = result.content[0].text
+            print(f"Result: {output_text}")
+
+        after_balance = ALGOD.account_info(buyer_addr)["amount"]
+        drop = before_balance - after_balance
+        print(f"Balance drop: {drop} microALGO")
+
+
+    if __name__ == "__main__":
+        asyncio.run(main())
+    ```
+
+    <sub>Source: [examples/localnet/quickstart_client.py](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_client.py)</sub>
+
+    {/* /example */}
+
+    ```bash
+    python localnet/quickstart_client.py
+    ```
+
+    ```text
+    Result: echo: hello world
+    Balance drop: 5000 microALGO
+    ```
+
+    The buyer paid exactly the price. The server's fee payer paid the 2,000 microALGO of network fees.
+  </Step>
+  <Step title="Pay from JavaScript">
+    `x402-avm-js` pays any x402 endpoint that uses the Algorand exact scheme. This example pays a small FastAPI paywall (5,000 microALGO on `GET /paid`, port 9221) built with `x402-algorand`. Start the server, then run the client:
+
+    ```bash
+    python localnet/server_for_js.py
+    ```
+
+    ```bash
+    node localnet/js_pay.mjs
+    ```
+
+    {/* example: localnet/js_pay.mjs */}
+
+    ```javascript localnet/js_pay.mjs expandable
+    /**
+     * Full end-to-end payment flow against an x402 HTTP paywall on LocalNet.
+     *
+     * Demonstrates:
+     * 1. Funding a fresh test account from the LocalNet KMD dispenser.
+     * 2. Requesting a paywalled resource and receiving HTTP 402 with PAYMENT-REQUIRED.
+     * 3. Decoding payment requirements using decodePaymentRequired().
+     * 4. Building and signing the exact AVM transaction group via payForRequirement().
+     * 5. Retrying the request with PAYMENT-SIGNATURE and verifying exact 5000 microALGO deduction.
+     *
+     * How to run:
+     *   # Ensure server_for_js.py is running on port 9221
+     *   node localnet/js_pay.mjs
+     *
+     * What it prints:
+     *   HTTP 402 status, decoded requirement, HTTP 200 status, settlement txid,
+     *   and balance drop of exactly 5000 microALGO.
+     */
+
+    import algosdk from 'algosdk';
+    import {
+      decodePaymentRequired,
+      payForRequirement,
+    } from 'x402-avm-js';
+
+    const ALGOD_URL = 'http://localhost:4001';
+    const ALGOD_TOKEN = 'a'.repeat(64);
+    const KMD_URL = 'http://localhost';
+    const KMD_PORT = 4002;
+    const KMD_TOKEN = 'a'.repeat(64);
+    const SERVER_URL = 'http://127.0.0.1:9221/paid';
+
+    async function fundFromKmd(algod, kmd, targetAddr, amount = 10_000_000n) {
+      const wallets = (await kmd.listWallets()).wallets;
+      const defWallet = wallets.find((w) => w.name === 'unencrypted-default-wallet');
+      if (!defWallet) throw new Error('Default KMD wallet not found');
+
+      const handle = (await kmd.initWalletHandle(defWallet.id, '')).wallet_handle_token;
+      const addresses = (await kmd.listKeys(handle)).addresses;
+
+      let dispenserAddr = addresses[0];
+      let maxBal = 0n;
+      for (const addr of addresses) {
+        const info = await algod.accountInformation(addr).do();
+        const bal = BigInt(info.amount);
+        if (bal > maxBal) {
+          maxBal = bal;
+          dispenserAddr = addr;
+        }
+      }
+
+      const exported = await kmd.exportKey(handle, '', dispenserAddr);
+      const dispenserSk = exported.private_key;
+
+      const sp = await algod.getTransactionParams().do();
+      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: dispenserAddr,
+        receiver: targetAddr,
+        amount,
+        suggestedParams: sp,
+      });
+
+      const signed = txn.signTxn(dispenserSk);
+      const { txid } = await algod.sendRawTransaction(signed).do();
+      await algosdk.waitForConfirmation(algod, txid, 5);
+    }
+
+    async function main() {
+      const algod = new algosdk.Algodv2(ALGOD_TOKEN, ALGOD_URL);
+      const kmd = new algosdk.Kmd(KMD_TOKEN, KMD_URL, KMD_PORT);
+
+      // 1. Generate and fund a fresh buyer account
+      const buyer = algosdk.generateAccount();
+      const buyerAddr = buyer.addr.toString();
+      console.log(`Created buyer account: ${buyerAddr}`);
+      await fundFromKmd(algod, kmd, buyerAddr, 10_000_000n);
+
+      const accBefore = await algod.accountInformation(buyerAddr).do();
+      const balBefore = BigInt(accBefore.amount);
+      console.log(`Initial buyer balance: ${balBefore} microALGO`);
+
+      // 2. Request paywalled endpoint (expect 402 Payment Required)
+      console.log(`\nFetching ${SERVER_URL} without payment...`);
+      const initialRes = await fetch(SERVER_URL);
+      console.log(`Initial response status: ${initialRes.status}`);
+
+      if (initialRes.status !== 402) {
+        throw new Error(`Expected HTTP 402, got ${initialRes.status}`);
+      }
+
+      const reqHeader = initialRes.headers.get('PAYMENT-REQUIRED') ?? initialRes.headers.get('payment-required');
+      if (!reqHeader) {
+        throw new Error('PAYMENT-REQUIRED header missing in 402 response');
+      }
+
+      // 3. Decode payment requirements
+      const challenge = decodePaymentRequired(reqHeader);
+      console.log(`Decoded x402 challenge version: ${challenge.x402Version}`);
+      const req = challenge.accepts[0];
+      console.log(`Accepted requirement: ${req.amount} units of asset ${req.asset} to ${req.payTo}`);
+
+      // 4. Build and sign payment group
+      const signTxns = async (unsignedBytesList, indexes) => {
+        return unsignedBytesList.map((bytes, idx) => {
+          if (indexes.includes(idx)) {
+            const txn = algosdk.decodeUnsignedTransaction(bytes);
+            return txn.signTxn(buyer.sk);
+          }
+          return null;
+        });
+      };
+
+      const paymentSignature = await payForRequirement(challenge, buyerAddr, algod, signTxns);
+      console.log(`Payment signature header constructed (length: ${paymentSignature.length})`);
+
+      // 5. Retry request with PAYMENT-SIGNATURE
+      console.log(`\nRetrying ${SERVER_URL} with PAYMENT-SIGNATURE...`);
+      const paidRes = await fetch(SERVER_URL, {
+        headers: {
+          'PAYMENT-SIGNATURE': paymentSignature,
+        },
+      });
+
+      console.log(`Paid response status: ${paidRes.status}`);
+      if (paidRes.status !== 200) {
+        const errorText = await paidRes.text();
+        throw new Error(`Expected HTTP 200, got ${paidRes.status}: ${errorText}`);
+      }
+
+      const paidData = await paidRes.json();
+      console.log(`Response payload: ${JSON.stringify(paidData)}`);
+
+      // 6. Verify buyer balance drop
+      const accAfter = await algod.accountInformation(buyerAddr).do();
+      const balAfter = BigInt(accAfter.amount);
+      const balanceDrop = balBefore - balAfter;
+
+      console.log(`Final buyer balance: ${balAfter} microALGO`);
+      console.log(`Balance drop: ${balanceDrop} microALGO`);
+
+      if (balanceDrop !== 5000n) {
+        throw new Error(`Expected exact balance drop of 5000 microALGO, got ${balanceDrop}`);
+      }
+
+      console.log('\nPayment completed and verified successfully.');
+    }
+
+    main().catch((err) => {
+      console.error('Test failed:', err);
+      process.exit(1);
+    });
+    ```
+
+    <sub>Source: [examples/localnet/js_pay.mjs](https://github.com/x402-avm/examples/blob/main/localnet/js_pay.mjs)</sub>
+
+    {/* /example */}
+
+    The script prints the `402` status, the decoded requirement, the `200` status after payment, the settled transaction id and a balance drop of 5,000 microALGO.
+
+    <Note>
+      `x402-avm-js` builds and signs payments; it does not include an MCP client transport. To call paid MCP tools from code, use `paid_mcp_session` from Python, or decode the `402` returned by a tool call yourself as shown on [Discovering prices](/agents/discovering-prices).
+    </Note>
+  </Step>
+</Steps>
+
+## Run every LocalNet example
+
+The examples repository has a script that runs all LocalNet examples in order, starting and stopping the servers they need:
+
+```bash
+bash scripts/run_all_localnet.sh
+```
+
+## What happened
+
+1. The client called `echo` with `{"text": "hello world"}`.
+2. `PaymentGate` answered with HTTP `402` and a `PAYMENT-REQUIRED` header: scheme `exact`, the LocalNet CAIP-2 network id, asset `0` (ALGO), amount `5000`, the server's `payTo` address and its fee payer.
+3. The client built a two-transaction atomic group:
+   - Transaction 0: the server's fee payer pays itself 0 ALGO with a 2,000 microALGO fee that covers both transactions.
+   - Transaction 1: the buyer pays 5,000 microALGO to `payTo` with a fee of 0. The client signs only this one.
+4. The client retried the call with the signed group in the `PAYMENT-SIGNATURE` header.
+5. The server verified the group (including a simulation on algod), ran the tool, and because it succeeded, signed the fee payer transaction and submitted the group.
+
+<Columns cols={2}>
+  <Card title="How it works" icon="workflow" href="/how-it-works">
+    The full protocol, with a sequence diagram.
+  </Card>
+  <Card title="Build a paid MCP tool" icon="graduation-cap" href="/tutorials/paid-mcp-tool">
+    A longer tutorial with dynamic pricing and indexer checks.
+  </Card>
+  <Card title="Move to TestNet" icon="flask-conical" href="/guides/networks/testnet">
+    Real transactions with free TestNet ALGO.
+  </Card>
+  <Card title="Agents" icon="bot" href="/agents/paying-for-tools">
+    Let an AI agent pay for tools with spend limits.
+  </Card>
+</Columns>
