@@ -1,0 +1,22 @@
+/* Pagefind search modal, styled to match the Mintlify theme. */
+.xs-root{--xs-primary:#2447B8;--xs-ink:#0F1B3D;--xs-bg:#fff;--xs-muted:#5b6482;--xs-border:#e1e5f0;--xs-hover:#f2f5fc;
+  position:fixed;inset:0;z-index:2147483000;display:none;align-items:flex-start;justify-content:center;padding:12vh 16px 16px;
+  background:rgba(15,27,61,.45);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.xs-root[data-open]{display:flex}
+html.dark .xs-root{--xs-primary:#8fa8f0;--xs-ink:#e8ecf8;--xs-bg:#0b1020;--xs-muted:#9aa3bf;--xs-border:#252d4a;--xs-hover:#151c34;background:rgba(0,0,0,.6)}
+.xs-panel{width:100%;max-width:640px;max-height:76vh;overflow:auto;background:var(--xs-bg);color:var(--xs-ink);
+  border:1px solid var(--xs-border);border-radius:16px;padding:16px;box-shadow:0 24px 60px rgba(15,27,61,.35)}
+.xs-panel{--pagefind-ui-scale:.9;--pagefind-ui-primary:var(--xs-primary);--pagefind-ui-text:var(--xs-ink);
+  --pagefind-ui-background:var(--xs-bg);--pagefind-ui-border:var(--xs-border);--pagefind-ui-tag:var(--xs-hover);
+  --pagefind-ui-border-width:1px;--pagefind-ui-border-radius:10px;--pagefind-ui-image-border-radius:8px;--pagefind-ui-font:inherit}
+.xs-panel .pagefind-ui__search-input{font-weight:500}
+.xs-panel .pagefind-ui__result-link{color:var(--xs-primary)}
+.xs-panel .pagefind-ui__result-excerpt{color:var(--xs-ink)}
+.xs-panel mark{background:rgba(36,71,184,.18);color:inherit;border-radius:2px}
+html.dark .xs-panel mark{background:rgba(143,168,240,.28)}
+.xs-panel .pagefind-ui__result{border-top-color:var(--xs-border)}
+.xs-panel .pagefind-ui__button{color:var(--xs-ink)}
+.xs-panel .pagefind-ui__message,.xs-panel .pagefind-ui__result-nested{color:var(--xs-muted)}
+.xs-panel .pagefind-ui__drawer{padding-bottom:4px}
+.xs-hint{margin:10px 2px 0;font-size:12px;color:var(--xs-muted);text-align:right}
+@media (max-width:640px){.xs-root{padding-top:12px}.xs-panel{max-height:90vh}}
