@@ -63,7 +63,7 @@ Serve `app` with any ASGI server, for example `uvicorn.run(app, host="127.0.0.1"
 | `min_fee_per_txn` | `1000` | Network minimum fee; the fee floor is twice this. |
 | `allow_loss` | `False` | Allow ALGO prices at or below the fee floor. |
 | `replay_db` | `None` | SQLite path for a replay store shared by several processes. |
-| `replay_cache_size` | `5000` | Documented as the in-memory replay cache size; the 0.4.0 replay store does not read it. |
+| `replay_cache_size` | `5000` | Documented as the in-memory replay cache size; the 0.4.x replay store does not read it. |
 
 Every parameter, with types: [`PaymentGate` reference](/reference/python/ai-economy-sdk/payment-gate).
 

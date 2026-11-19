@@ -36,7 +36,7 @@ When `ExactAvmFacilitatorScheme.verify()` rejects a payment, it returns `VerifyR
 | `transaction_simulation_failed` | `ERR_SIMULATION_FAILED` | algod's simulation rejected the group: insufficient balance, an account below its minimum balance, a missing ASA opt-in, expired rounds. The node's message is in `invalid_message`. | Fund or opt in the account named in the message; rebuild with fresh parameters. |
 | `transaction_failed` | `ERR_TRANSACTION_FAILED` | Settlement: submitting or confirming the group failed. | Check algod, the fee payer's balance and the validity rounds; the buyer can pay again. |
 
-Three constants are defined for compatibility but not returned by the 0.2.0 facilitator: `invalid_exact_avm_payload` (`ERR_INVALID_PAYLOAD`), `invalid_exact_avm_payload_transaction_decode_failed` (`ERR_TXN_DECODE_FAILED`) and `invalid_exact_avm_payload_transaction_type` (`ERR_INVALID_TXN_TYPE`). A wrong transaction type is reported as `invalid_exact_avm_payload_asset_id_mismatch`.
+Three constants are defined for compatibility but not returned by the 0.2.x facilitator: `invalid_exact_avm_payload` (`ERR_INVALID_PAYLOAD`), `invalid_exact_avm_payload_transaction_decode_failed` (`ERR_TXN_DECODE_FAILED`) and `invalid_exact_avm_payload_transaction_type` (`ERR_INVALID_TXN_TYPE`). A wrong transaction type is reported as `invalid_exact_avm_payload_asset_id_mismatch`.
 
 ## ai-economy-sdk errors
 

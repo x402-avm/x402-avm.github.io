@@ -5,6 +5,50 @@ description: "Notable changes to ai-economy-sdk, x402-algorand and x402-avm-js, 
 
 This page combines the changelogs of the three packages: [ai-economy-sdk](https://github.com/x402-avm/ai-economy-sdk/blob/main/CHANGELOG.md), [x402-algorand](https://github.com/x402-avm/x402-algorand/blob/main/CHANGELOG.md) and [x402-avm-js](https://github.com/x402-avm/x402-avm-js/blob/main/CHANGELOG.md).
 
+<Update label="2026-11-19" description="ai-economy-sdk 0.4.1, x402-algorand 0.2.1, x402-avm-js 0.3.1" tags={["Python", "JavaScript", "Metadata"]}>
+  ## ai-economy-sdk 0.4.1
+
+  **Added**
+
+  - Project URLs (`Homepage`, `Documentation`, `Repository`, `Issues`, `Changelog`), PyPI classifiers, and dev optional dependencies (`pytest`, `pytest-asyncio`, `ruff`, `build`, `twine`) in `pyproject.toml`.
+  - Self-contained LocalNet test infrastructure in `tests/conftest.py` with dynamic KMD dispenser funding, ephemeral account creation, and dynamic asset generation, removing external file and private path dependencies.
+  - Public repository documentation and metadata: comprehensive `README.md` with working FastMCP quickstart, `AGENTS.md` coding agent specification, `ruff.toml`, `.editorconfig`, GitHub Actions CI pipeline, and Dependabot weekly updates with PR grouping.
+
+  **Changed**
+
+  - Code formatted with Ruff (`ruff check` and `ruff format`) for standard import ordering and styling without behavioral changes.
+  - Dependency policy: Kept stable ranges `fastmcp>=3.4,<4` and `mcp>=1.29,<2`; major versions `mcp 2.x` and `fastmcp 4.x` are pinned/ignored in Dependabot configuration due to upstream `httpx2` breaking changes affecting `x402` compatibility.
+
+  ## x402-algorand 0.2.1
+
+  **Added**
+
+  - Project URLs (`Homepage`, `Documentation`, `Issues`, `Changelog`) and classifiers (Python 3.10–3.13, `Typing :: Typed`, `Development Status :: 4 - Beta`) in `pyproject.toml`.
+  - `dev` optional dependencies extra in `pyproject.toml` (`pytest`, `pytest-asyncio`, `ruff`, `build`, `twine`, `httpx`).
+  - Public network simulation tests in `tests/test_public_networks.py` covering ALGO and USDC on TestNet and MainNet (`PUBLIC_NETS=1`).
+  - Public documentation and agent guidance: comprehensive `README.md` and `AGENTS.md`.
+  - Tooling and CI configurations: `ruff.toml`, `.gitignore`, `.editorconfig`, `.github/workflows/ci.yml`, and `.github/dependabot.yml` with ecosystem update groups.
+
+  **Changed**
+
+  - Made LocalNet tests (`tests/test_localnet_algo_payment.py`, `tests/test_spend_controls.py`, `tests/conftest.py`) self-contained by generating and funding ephemeral test accounts directly from the LocalNet KMD dispenser.
+  - Applied code formatting with `ruff` across package and tests with no behavior changes.
+
+  ## x402-avm-js 0.3.1
+
+  **Added**
+
+  - Repository and package metadata: repository, homepage, bugs URL, keywords, and author.
+  - Self-contained LocalNet golden test suite with dynamic KMD dispenser funding and dynamic ASA lifecycle testing.
+  - Documentation and repository standards: README.md, AGENTS.md, .gitignore, and .editorconfig.
+  - Dependabot configuration grouping minor/patch updates and pinning vitest to 3.x for Node 18/20 runtime compatibility.
+
+  **Changed**
+
+  - Updated devDependencies: upgraded TypeScript to 7.0.2.
+  - Hardened timestamp generator `getNs()` to safely access `globalThis.process` across browser, edge, and Node.js environments.
+</Update>
+
 <Update label="2026-11-18" description="ai-economy-sdk 0.4.0, x402-algorand 0.2.0, x402-avm-js 0.3.0, and earlier 0.2/0.3 releases" tags={["Python", "JavaScript", "Licensing"]}>
   ## x402-algorand 0.2.0
 
