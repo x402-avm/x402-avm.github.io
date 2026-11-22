@@ -25,7 +25,7 @@ from x402 import x402Client
 | `set_spend_controls` | `set_spend_controls(controls)` | Replace spend controls; `False` disables them. |
 | `create_payment_payload` | `async create_payment_payload(payment_required, resource=None, extensions=None)` | Select a requirement and return a signed `PaymentPayload`. |
 
-Spend controls default to the assets the registered schemes recognize (ALGO and USDC for Algorand) with a cap of `DEFAULT_MAX_AMOUNT_PER_PAYMENT = "$1"`. See [Guardrails](/agents/guardrails#spend-controls-reference).
+Spend controls default to the assets the registered schemes recognize (ALGO and USDC for Algorand) with a cap of `DEFAULT_MAX_AMOUNT_PER_PAYMENT = "$1"`. See [Guardrails](/build/pay-from-python#spend-controls).
 
 ## x402ResourceServer
 

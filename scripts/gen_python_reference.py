@@ -241,7 +241,7 @@ PACKAGES = [
         ),
         extra_note=(
             "The payload error codes (`ERR_*` in `x402_algorand.constants`) are listed on "
-            "[Error codes](/resources/error-codes)."
+            "[Error codes](/reference/errors)."
         ),
     ),
 ]

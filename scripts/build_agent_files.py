@@ -143,7 +143,9 @@ def mdx_to_md(body: str, base: str) -> str:
             a = attrs(f"<Card {cm.group(1)}>")
             href = a.get("href", "")
             if href.startswith("/"):
-                href = f"{base}{href}.md" if not href.endswith(".md") else f"{base}{href}"
+                path, hash_, frag = href.partition("#")
+                path = path if path.endswith(".md") else f"{path}.md"
+                href = f"{base}{path}{hash_}{frag}"
             text = cm.group(2).strip()
             out.append(f"- [{a.get('title', '')}]({href})" + (f": {text}" if text else ""))
             continue
@@ -223,6 +225,9 @@ def main() -> None:
         out = site / f"{page}.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(md + f"\nSource: {html_url}\n")
+        if page.endswith("/index"):
+            # The export also serves <dir>/index at <dir>/ and links it to <dir>.md.
+            (site / f"{page[: -len('/index')]}.md").write_text(md + f"\nSource: {html_url}\n")
         section = f"{tab}: {group}" if group and group != tab else tab
         if section != current_section:
             llms += ["", f"## {section}", ""]

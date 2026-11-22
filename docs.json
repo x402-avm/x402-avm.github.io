@@ -124,103 +124,36 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Get started",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Get started",
+            "group": "Start here",
             "pages": [
               "index",
               "quickstart",
-              "how-it-works",
-              "installation",
-              "networks",
-              "glossary"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Guides",
-        "groups": [
-          {
-            "group": "Networks",
-            "pages": [
-              "guides/networks/localnet",
-              "guides/networks/testnet",
-              "guides/networks/mainnet"
+              "how-it-works"
             ]
           },
           {
-            "group": "ai-economy-sdk",
+            "group": "Build",
             "pages": [
-              "ai-economy-sdk/overview",
-              "ai-economy-sdk/server",
-              "ai-economy-sdk/client",
-              "ai-economy-sdk/pricing",
-              "ai-economy-sdk/passes",
-              "ai-economy-sdk/identity",
-              "ai-economy-sdk/settlement",
-              "ai-economy-sdk/production"
+              "build/sell-mcp-tools",
+              "build/pricing",
+              "build/paywall-http-api",
+              "build/pay-from-python",
+              "build/pay-from-browser",
+              "build/pay-from-node",
+              "build/ai-agents",
+              "build/identity",
+              "build/facilitator"
             ]
           },
           {
-            "group": "x402-algorand",
+            "group": "Go to production",
             "pages": [
-              "x402-algorand/overview",
-              "x402-algorand/client",
-              "x402-algorand/resource-server",
-              "x402-algorand/facilitator",
-              "x402-algorand/fastapi",
-              "x402-algorand/flask",
-              "x402-algorand/httpx-requests",
-              "x402-algorand/avm-exact-scheme",
-              "x402-algorand/custom-networks"
-            ]
-          },
-          {
-            "group": "x402-avm-js",
-            "pages": [
-              "x402-avm-js/overview",
-              "x402-avm-js/browser-wallets",
-              "x402-avm-js/node",
-              "x402-avm-js/identity",
-              "x402-avm-js/networks"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Tutorials",
-        "groups": [
-          {
-            "group": "Tutorials",
-            "pages": [
-              "tutorials/index",
-              "tutorials/paid-mcp-tool",
-              "tutorials/browser-paywall",
-              "tutorials/usdc-on-mainnet",
-              "tutorials/localnet-to-mainnet"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "For AI agents",
-        "groups": [
-          {
-            "group": "Agents that pay",
-            "pages": [
-              "agents/overview",
-              "agents/paying-for-tools",
-              "agents/discovering-prices",
-              "agents/guardrails"
-            ]
-          },
-          {
-            "group": "Agents that read and edit",
-            "pages": [
-              "agents/ai-tools",
-              "agents/agents-md"
+              "production/networks",
+              "production/mainnet",
+              "production/security"
             ]
           }
         ]
@@ -231,7 +164,16 @@
           {
             "group": "Overview",
             "pages": [
-              "reference/index"
+              "reference/index",
+              "reference/packages"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "reference/protocol/avm-exact-scheme",
+              "reference/protocol/http-402",
+              "reference/errors"
             ]
           },
           {
@@ -466,16 +408,185 @@
           {
             "group": "Resources",
             "pages": [
-              "resources/security",
               "resources/troubleshooting",
-              "resources/error-codes",
-              "resources/http-402-reference",
               "resources/faq",
-              "resources/changelog"
+              "resources/glossary",
+              "resources/changelog",
+              "resources/ai-tools"
             ]
           }
         ]
       }
     ]
-  }
+  },
+  "redirects": [
+    {
+      "source": "/agents/agents-md",
+      "destination": "/resources/ai-tools"
+    },
+    {
+      "source": "/agents/ai-tools",
+      "destination": "/resources/ai-tools"
+    },
+    {
+      "source": "/agents/discovering-prices",
+      "destination": "/build/ai-agents"
+    },
+    {
+      "source": "/agents/guardrails",
+      "destination": "/build/ai-agents"
+    },
+    {
+      "source": "/agents/overview",
+      "destination": "/build/ai-agents"
+    },
+    {
+      "source": "/agents/paying-for-tools",
+      "destination": "/build/ai-agents"
+    },
+    {
+      "source": "/ai-economy-sdk/client",
+      "destination": "/build/pay-from-python"
+    },
+    {
+      "source": "/ai-economy-sdk/identity",
+      "destination": "/build/identity"
+    },
+    {
+      "source": "/ai-economy-sdk/overview",
+      "destination": "/build/sell-mcp-tools"
+    },
+    {
+      "source": "/ai-economy-sdk/passes",
+      "destination": "/build/pricing"
+    },
+    {
+      "source": "/ai-economy-sdk/pricing",
+      "destination": "/build/pricing"
+    },
+    {
+      "source": "/ai-economy-sdk/production",
+      "destination": "/production/mainnet"
+    },
+    {
+      "source": "/ai-economy-sdk/server",
+      "destination": "/build/sell-mcp-tools"
+    },
+    {
+      "source": "/ai-economy-sdk/settlement",
+      "destination": "/how-it-works"
+    },
+    {
+      "source": "/glossary",
+      "destination": "/resources/glossary"
+    },
+    {
+      "source": "/guides/networks/localnet",
+      "destination": "/production/networks"
+    },
+    {
+      "source": "/guides/networks/mainnet",
+      "destination": "/production/mainnet"
+    },
+    {
+      "source": "/guides/networks/testnet",
+      "destination": "/production/networks"
+    },
+    {
+      "source": "/installation",
+      "destination": "/reference/packages"
+    },
+    {
+      "source": "/networks",
+      "destination": "/production/networks"
+    },
+    {
+      "source": "/resources/error-codes",
+      "destination": "/reference/errors"
+    },
+    {
+      "source": "/resources/http-402-reference",
+      "destination": "/reference/protocol/http-402"
+    },
+    {
+      "source": "/resources/security",
+      "destination": "/production/security"
+    },
+    {
+      "source": "/tutorials/browser-paywall",
+      "destination": "/build/pay-from-browser"
+    },
+    {
+      "source": "/tutorials/index",
+      "destination": "/quickstart"
+    },
+    {
+      "source": "/tutorials/localnet-to-mainnet",
+      "destination": "/production/mainnet"
+    },
+    {
+      "source": "/tutorials/paid-mcp-tool",
+      "destination": "/build/sell-mcp-tools"
+    },
+    {
+      "source": "/tutorials/usdc-on-mainnet",
+      "destination": "/production/mainnet"
+    },
+    {
+      "source": "/x402-algorand/avm-exact-scheme",
+      "destination": "/reference/protocol/avm-exact-scheme"
+    },
+    {
+      "source": "/x402-algorand/client",
+      "destination": "/build/pay-from-python"
+    },
+    {
+      "source": "/x402-algorand/custom-networks",
+      "destination": "/production/networks"
+    },
+    {
+      "source": "/x402-algorand/facilitator",
+      "destination": "/build/facilitator"
+    },
+    {
+      "source": "/x402-algorand/fastapi",
+      "destination": "/build/paywall-http-api"
+    },
+    {
+      "source": "/x402-algorand/flask",
+      "destination": "/build/paywall-http-api"
+    },
+    {
+      "source": "/x402-algorand/httpx-requests",
+      "destination": "/build/pay-from-python"
+    },
+    {
+      "source": "/x402-algorand/overview",
+      "destination": "/build/paywall-http-api"
+    },
+    {
+      "source": "/x402-algorand/resource-server",
+      "destination": "/build/paywall-http-api"
+    },
+    {
+      "source": "/x402-avm-js/browser-wallets",
+      "destination": "/build/pay-from-browser"
+    },
+    {
+      "source": "/x402-avm-js/identity",
+      "destination": "/build/identity"
+    },
+    {
+      "source": "/x402-avm-js/networks",
+      "destination": "/production/networks"
+    },
+    {
+      "source": "/x402-avm-js/node",
+      "destination": "/build/pay-from-node"
+    },
+    {
+      "source": "/x402-avm-js/overview",
+      "destination": "/build/pay-from-browser"
+    }
+  ]
 }

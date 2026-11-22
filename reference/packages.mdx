@@ -1,0 +1,141 @@
+---
+title: "Packages and versions"
+description: "Install commands, supported runtimes, dependency ranges and upgrade notes for ai-economy-sdk, x402-algorand and x402-avm-js."
+---
+
+Use this page to install a specific version, check what it runs on, or upgrade from an older release.
+
+| Package | Registry | Version | Licence | Runtime |
+|---|---|---|---|---|
+| `ai-economy-sdk` | [PyPI](https://pypi.org/project/ai-economy-sdk/) | 0.5.1 | MIT | Python 3.10–3.14 |
+| `x402-algorand` | [PyPI](https://pypi.org/project/x402-algorand/) | 0.3.0 | Apache-2.0 (with NOTICE) | Python 3.10–3.14 |
+| `x402-avm-js` | [npm](https://www.npmjs.com/package/x402-avm-js) | 0.4.1 | MIT | Node.js 20+, browsers, workers |
+
+`x402-algorand` is derived from GoPlausible's `x402-avm` 2.0.2 and plugs into the official `x402` Python SDK (`x402>=2.28,<3`) maintained by the x402 Foundation.
+
+## Install
+
+<CodeGroup>
+```bash pip
+pip install ai-economy-sdk==0.5.1        # sell MCP tools, pay for them from Python
+pip install x402-algorand==0.3.0         # only the Algorand scheme for the x402 SDK
+```
+
+```bash uv
+uv pip install ai-economy-sdk==0.5.1
+uv pip install x402-algorand==0.3.0
+```
+
+```bash npm
+npm install x402-avm-js@0.4.1 algosdk
+```
+
+```bash pnpm
+pnpm add x402-avm-js@0.4.1 algosdk
+```
+
+```bash yarn
+yarn add x402-avm-js@0.4.1 algosdk
+```
+</CodeGroup>
+
+- `ai-economy-sdk` also installs `x402-algorand`, the official `x402` package, FastMCP, the MCP SDK, `py-algorand-sdk`, httpx, Starlette, FastAPI and uvicorn.
+- The official SDK's framework integrations need their extras, for example `pip install "x402[flask]"` for the Flask middleware.
+- `x402-avm-js` is an ES module with one runtime dependency, `algosdk` (v3); install it alongside to create clients and sign. It uses only standard web APIs (`Uint8Array`, `TextEncoder`, `TextDecoder`) and no Node built-ins such as `Buffer`, so it runs in browsers, Node.js, workers and edge runtimes without polyfills.
+
+Check the installation:
+
+<CodeGroup>
+```bash Python
+python -c '
+import x402, x402_algorand, ai_economy_sdk
+print("ai-economy-sdk", ai_economy_sdk.__version__)
+print("x402-algorand", x402_algorand.__version__)
+print("x402", x402.__version__)
+'
+```
+
+```bash Node.js
+node --input-type=module -e "import { resolveNetwork } from 'x402-avm-js'; console.log(resolveNetwork('mainnet'))"
+```
+</CodeGroup>
+
+```text
+ai-economy-sdk 0.5.1
+x402-algorand 0.3.0
+x402 2.28.0
+```
+
+The `x402` version is the one pip resolved, 2.28 or later. The Node.js check prints `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k`.
+
+## Compatibility
+
+From each package's `pyproject.toml` / `package.json` and CI matrix:
+
+| Package | Version | Official `x402` (Python) | Python | Node.js | Other dependency ranges |
+|---|---|---|---|---|---|
+| `ai-economy-sdk` | 0.5.1 | `>=2.28,<3` | `>=3.10`; tested on 3.10–3.14 | | `x402-algorand>=0.2.1`, `fastmcp>=3.4,<4`, `mcp>=1.29,<2`, `py-algorand-sdk>=2.6`, `httpx>=0.27`, `uvicorn>=0.30` |
+| `x402-algorand` | 0.3.0 | `>=2.28,<3` | `>=3.10`; tested on 3.10–3.14 | | `py-algorand-sdk>=2.6`, `pynacl>=1.4` |
+| `x402-avm-js` | 0.4.1 | | | `>=20`; tested on 20, 22, 24 | `algosdk ^3.9.0` |
+
+`fastmcp` 4.x and `mcp` 2.x are excluded on purpose: the 0.4.1 release notes record upstream `httpx` changes in those majors that affect `x402` compatibility. These docs were checked on Python 3.14 with `x402` 2.28.0, `fastmcp` 3.4.11 and `mcp` 1.30.0, and on Node.js 24 with `algosdk` 3.9.0.
+
+Previous releases: `ai-economy-sdk` 0.4.1 and `x402-algorand` 0.2.1 declared Python 3.10 to 3.13 (`>=3.10`) and the same `x402`, `fastmcp` and `mcp` ranges; `ai-economy-sdk` 0.4.1 required `x402-algorand>=0.2.0`. `x402-avm-js` 0.3.1 declared Node.js `>=18`.
+
+Every release: [Changelog](/resources/changelog).
+
+## Upgrade notes
+
+### ai-economy-sdk 0.5
+
+0.5.0 is a security release: in 0.4.x the gate did not cover the Streamable HTTP transport or SSE apps mounted under a path prefix, so priced tools could be called without paying there ([details](/production/security#unpaid-tool-calls)). After upgrading:
+
+- Pass `transport=` to `wrap()` explicitly. `"streamable-http"` is recommended; without `transport=`, `wrap()` still serves SSE and emits a `FutureWarning`.
+- Point clients at the transport you serve: `paid_mcp_session` uses Streamable HTTP for URLs whose path ends in `/mcp`, and SSE for other URLs (or pass `transport=`).
+- Errors have their own classes ([Errors](/reference/errors#ai-economy-sdk-exceptions)). Each still subclasses the type raised in 0.4.x, so `except ValueError` / `except RuntimeError` / `except ToolError` handlers keep working.
+- A pricing function that accepts neither `(args, sender)` nor `(args)` raises `ConfigurationError` when the tool is registered with `AIEconomySDK.add_tool()`, instead of failing per request.
+- `ChainReader` and `PaymentGate` still treat failed indexer and algod lookups as "no usage, subscription or pass", but other exceptions now propagate.
+- `DefaultAvmSigner.private_key` is read-only and deprecated; keep your own reference to the key. `sign_identity()` is deprecated in favour of `sign_identity_txn()`.
+- 0.5.1: a payment refused by the buyer's spend controls raises `SpendLimitExceededError` instead of an `ExceptionGroup`.
+
+### ai-economy-sdk from 0.3
+
+- Network ids are CAIP-2 short ids (`algorand:` plus 32 characters), for example `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k`. Legacy 44-character ids are still accepted everywhere and converted.
+- `x402-algorand` is a plugin for the official `x402` package (2.28 or later) instead of a fork of it.
+
+### x402-algorand 0.3
+
+0.3.0 is backward compatible with code written for 0.2.x. Changes you may notice:
+
+- Hand-written signers can be replaced by `PayerAvmSigner` and `ServerAvmSigner`.
+- Unsupported networks, wrong-network algod nodes and undecodable transactions raise `NetworkError`, `NetworkMismatchError` and `TransactionDecodeError` (all still `ValueError`s).
+- `settle()` returns the ID of the buyer's payment transaction (`paymentGroup[paymentIndex]`), as the specification requires. With a fee payer, 0.2.x returned the fee payer transaction's ID.
+- Payments authorized by a k-of-n multisig, a logic signature, or the auth address of a rekeyed account are accepted. A rekey pair is only accepted when the second rekey returns authority to the sender.
+- The V1 facilitator and client wrappers accept the official SDK's `PaymentPayloadV1` / `PaymentRequirementsV1` models, so V1 payments routed through `x402Facilitator` / `x402Client` work.
+- `x402_algorand.__version__` and a `py.typed` marker; Python 3.14 is supported.
+
+### x402-algorand from 0.1.x
+
+0.2.0 had two breaking changes:
+
+1. **A plugin, not a fork.** 0.1.x installed its own copy of the top-level `x402` package. 0.2.0 ships only `x402_algorand` and depends on the official `x402` package.
+
+   | 0.1.x | 0.2.0 |
+   |---|---|
+   | `from x402.mechanisms.avm.exact.client import ExactAvmScheme` | `from x402_algorand.exact.client import ExactAvmScheme` |
+   | `from x402.mechanisms.avm.exact.register import register_exact_avm_client` | `from x402_algorand.exact.register import register_exact_avm_client` |
+   | core classes from the fork | `from x402 import x402Client, x402ResourceServer, x402Facilitator` |
+
+2. **Short CAIP-2 ids.** The official SDK validates network ids with `^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$`, so ids use 32 characters of the URL-safe base64 genesis hash. Legacy 44-character ids are still accepted by `normalize_network()` and converted.
+
+### x402-avm-js 0.4
+
+- **Default spend cap.** Payments above 1,000,000 base units are refused. To pay more, pass `{ maxAmount: ... }` as the last argument of `payForRequirement` or `buildExactAvmGroup`.
+- **Node.js 20 or later.** Node.js 18 is no longer supported.
+- **Validation.** `decodePaymentRequired` validates the decoded shape and throws `InvalidPaymentRequiredError` (0.3 returned whatever JSON it found). `selectRequirement`, `encodePaymentHeader` and `payForRequirement` take `PaymentRequired` instead of `PaymentRequired | any`; `extra` and `extensions` values are `unknown` instead of `any`.
+- **Typed errors.** Catch `X402AvmError` subclasses or check `error.code` instead of matching messages.
+- 0.4.1: `algodClient('localnet')` connects to port 4001; earlier versions connected to port 80.
+
+### x402-avm-js from 0.2
+
+0.3 uses the Algorand CAIP-2 profile for network ids: `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` for MainNet and `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` for TestNet. Legacy 44-character ids are still accepted by `resolveNetwork` and `selectRequirement`, so existing servers keep working.

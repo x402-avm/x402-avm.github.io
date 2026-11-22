@@ -1,0 +1,64 @@
+---
+title: "Pay from Node.js"
+description: "Pay x402 endpoints from Node.js services, scripts and agents with x402-avm-js and a key from the environment or KMD."
+---
+
+Use this page when a Node.js process, not a person, holds the wallet: a backend calling a paid API, a CI job, an agent. The flow is the same as [in the browser](/build/pay-from-browser); only the signing function changes.
+
+```bash
+npm init -y
+npm pkg set type=module
+npm install x402-avm-js@0.4.1 algosdk
+```
+
+## Sign with a key from the environment
+
+```ts
+import algosdk from 'algosdk';
+import { algodClient, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+
+const algod = algodClient('mainnet');
+const account = algosdk.mnemonicToSecretKey(process.env.AGENT_MNEMONIC!);
+
+const res = await fetch('https://api.example.com/data');
+if (res.status === 402) {
+  const challenge = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
+
+  const paymentHeader = await payForRequirement(
+    challenge,
+    account.addr.toString(),
+    algod,
+    async (unsignedTxns, signIndexes) =>
+      unsignedTxns.map((bytes, i) =>
+        signIndexes.includes(i) ? algosdk.decodeUnsignedTransaction(bytes).signTxn(account.sk) : null
+      ),
+    { maxAmount: 100_000n } // refuse anything above 0.1 ALGO / 0.1 USDC (default cap: 1,000,000 base units)
+  );
+
+  const paid = await fetch('https://api.example.com/data', {
+    headers: { 'PAYMENT-SIGNATURE': paymentHeader },
+  });
+}
+```
+
+Any offer above the cap is refused with `SpendLimitExceededError` before your signing function runs. You can also restrict assets, networks and recipients: [spend controls](/build/pay-from-browser#spend-controls).
+
+## A runnable LocalNet example
+
+[Quickstart](/quickstart) step 5 runs `localnet/js_pay.mjs`: it funds an account from LocalNet's KMD, pays a `402` from [`localnet/server_for_js.py`](https://github.com/x402-avm/examples/blob/main/localnet/server_for_js.py) (5,000 microALGO on port 9221), checks the exact balance drop, and shows an over-cap demand being refused.
+
+```bash
+python localnet/server_for_js.py
+node localnet/js_pay.mjs
+```
+
+The server answers `200` with a `PAYMENT-RESPONSE` header that carries the settlement result, including the transaction id.
+
+## Calling MCP tools from Node
+
+`x402-avm-js` builds and signs payments; it has no MCP client transport. To call paid MCP tools, use [`paid_mcp_session`](/build/pay-from-python) from Python, or [read the tool call's `402`](/build/ai-agents#check-a-price-before-paying) and pay it yourself.
+
+## Next
+
+- [Networks](/production/networks): presets, LocalNet ids and private networks.
+- [Identity](/build/identity): prove which address is calling.

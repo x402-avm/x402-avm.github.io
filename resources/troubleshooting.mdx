@@ -3,6 +3,8 @@ title: "Troubleshooting"
 description: "Fixes for common problems with LocalNet, networks, opt-ins, balances, prices and payments."
 ---
 
+Find your error message or symptom in the table, apply the fix, and follow the link if you need the background.
+
 ## Quick diagnosis
 
 | Symptom | Likely cause | Fix |
@@ -24,7 +26,7 @@ description: "Fixes for common problems with LocalNet, networks, opt-ins, balanc
 | `invalid_exact_avm_payload_recipient_mismatch` | The payment goes to another address than `payTo` | Use the `payTo` from the challenge |
 | `invalid_exact_avm_payload_invalid_signature` | Wrong key, or the transaction changed after signing | Sign with the sender's key after the group id is set |
 
-All facilitator codes are explained on [Error codes](/resources/error-codes).
+All facilitator codes are explained on [Error codes](/reference/errors).
 
 ## LocalNet not reachable
 
@@ -43,19 +45,7 @@ urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='localhost', port=4001
 
 ## Asset not opted in
 
-An account must opt in to an ASA, such as USDC, before it can receive it. Opt in with a 0-amount transfer to itself:
-
-```python
-from algosdk.transaction import AssetTransferTxn, wait_for_confirmation
-from algosdk.atomic_transaction_composer import AccountTransactionSigner
-
-sp = algod_client.suggested_params()
-txn = AssetTransferTxn(sender=address, sp=sp, receiver=address, amt=0, index=asset_id)
-txid = algod_client.send_transaction(AccountTransactionSigner(private_key).sign_transactions([txn], [0])[0])
-wait_for_confirmation(algod_client, txid, 4)
-```
-
-Both the vendor's `pay_to` account and the buyer need it.
+An account must opt in to an ASA, such as USDC, before it can receive it, and both the vendor's `pay_to` account and the buyer need it. The opt-in code is in [Accept USDC](/production/mainnet#accept-usdc).
 
 ## Balance below the minimum
 
@@ -78,11 +68,11 @@ The official `x402` httpx client does not loop: after a bounded number of paid r
 ai_economy_sdk.exceptions.ConfigurationError: price 1000 for tool 'summarize' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True
 ```
 
-For ALGO prices the server pays 2,000 microALGO in fees per settled call. Charge more than that (3,000 microALGO is a sensible minimum), or pass `allow_loss=True` to subsidize calls on purpose. Prices returned by a pricing function in that range are raised to 2,001 microALGO with a warning.
+Charge more than 2,000 microALGO, or pass `allow_loss=True` to subsidize calls on purpose. See [the fee floor](/build/pricing#the-fee-floor).
 
 ## LocalNet was reset
 
-A reset creates a new genesis hash, so the LocalNet network id changes. Restart servers and clients so they read the new id from algod. Old accounts and assets are gone; the examples create fresh ones each run.
+A reset creates a new genesis hash, so the LocalNet network id changes. Restart servers and clients so they read the new id; see [LocalNet](/production/networks#localnet).
 
 ## Still stuck
 

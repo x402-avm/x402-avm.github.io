@@ -1,0 +1,313 @@
+{
+  "_comment": "Old page paths (left) that moved in the docs restructure. 'to' is the default target; 'anchors' maps an old heading id to its new home. Same-named headings on the target page are matched automatically by scripts/add_redirects.py. Used for docs.json redirects and the static redirect stubs.",
+  "redirects": {
+    "/agents/agents-md": {
+      "to": "/resources/ai-tools#agents-md-files",
+      "anchors": {}
+    },
+    "/agents/ai-tools": {
+      "to": "/resources/ai-tools",
+      "anchors": {}
+    },
+    "/agents/discovering-prices": {
+      "to": "/build/ai-agents#check-a-price-before-paying",
+      "anchors": {
+        "policies-for-x402-clients": "/build/pay-from-python#registration-options-and-policies",
+        "with-paid_mcp_session": "/build/ai-agents#check-a-price-before-paying"
+      }
+    },
+    "/agents/guardrails": {
+      "to": "/build/ai-agents#set-limits",
+      "anchors": {
+        "spend-controls-reference": "/build/pay-from-python#spend-controls",
+        "allow-another-asa": "/build/pay-from-python#spend-controls",
+        "javascript-clients": "/build/pay-from-browser#spend-controls",
+        "server-side-protections-that-help-agents": "/production/security"
+      }
+    },
+    "/agents/overview": {
+      "to": "/build/ai-agents",
+      "anchors": {}
+    },
+    "/agents/paying-for-tools": {
+      "to": "/build/ai-agents",
+      "anchors": {
+        "what-the-agent-pays-for": "/build/ai-agents#what-the-agent-pays-for",
+        "javascript-agents": "/build/ai-agents#agents-in-javascript",
+        "identity": "/build/ai-agents#what-the-agent-pays-for",
+        "minimal-agent-session": "/build/ai-agents#give-the-agent-a-paid-session",
+        "networks": "/build/ai-agents#give-the-agent-a-paid-session",
+        "the-loop": "/build/ai-agents#give-the-agent-a-paid-session"
+      }
+    },
+    "/ai-economy-sdk/client": {
+      "to": "/build/pay-from-python",
+      "anchors": {
+        "spend-controls": "/build/pay-from-python#spend-controls",
+        "parameters": "/build/pay-from-python#call-paid-mcp-tools",
+        "open-a-paid-session": "/build/pay-from-python#call-paid-mcp-tools",
+        "how-the-negotiation-works": "/how-it-works#the-x402-flow",
+        "javascript-clients": "/build/pay-from-node#calling-mcp-tools-from-node"
+      }
+    },
+    "/ai-economy-sdk/identity": {
+      "to": "/build/identity",
+      "anchors": {
+        "verification-rules": "/build/identity#the-identity-transaction",
+        "the-legacy-headers": "/build/identity#the-two-formats",
+        "two-formats": "/build/identity#the-two-formats",
+        "create-and-verify": "/build/identity#create-and-verify-a-proof",
+        "complete-example": "/build/identity#examples"
+      }
+    },
+    "/ai-economy-sdk/overview": {
+      "to": "/build/sell-mcp-tools",
+      "anchors": {
+        "upgrading-to-0-5": "/reference/packages#ai-economy-sdk-0-5",
+        "migrating-from-0-3": "/reference/packages#ai-economy-sdk-from-0-3",
+        "architecture": "/how-it-works#the-x402-flow"
+      }
+    },
+    "/ai-economy-sdk/passes": {
+      "to": "/build/pricing#passes",
+      "anchors": {
+        "how-passes-work": "/how-it-works#passes",
+        "subscription-tokens": "/build/pricing#subscription-tokens",
+        "buy-a-pass": "/build/pricing#buy-a-pass"
+      }
+    },
+    "/ai-economy-sdk/pricing": {
+      "to": "/build/pricing",
+      "anchors": {
+        "fixed-price-for-every-tool": "/build/pricing#fixed-and-per-tool-prices",
+        "per-tool-prices": "/build/pricing#fixed-and-per-tool-prices"
+      }
+    },
+    "/ai-economy-sdk/production": {
+      "to": "/production/mainnet",
+      "anchors": {
+        "accept-usdc": "/production/mainnet#accept-usdc",
+        "manage-keys": "/production/mainnet#keys",
+        "run-several-workers": "/production/security#replay-store",
+        "checklist": "/production/mainnet#go-live-checklist",
+        "switch-the-network": "/production/mainnet#server-configuration"
+      }
+    },
+    "/ai-economy-sdk/server": {
+      "to": "/build/sell-mcp-tools",
+      "anchors": {
+        "transports": "/build/sell-mcp-tools#choose-a-transport",
+        "build-the-http-app-yourself": "/build/sell-mcp-tools#mount-the-app-yourself",
+        "constructor-parameters": "/build/sell-mcp-tools#configure-paymentgate",
+        "wrap-a-fastmcp-server-with-paymentgate": "/build/sell-mcp-tools#configure-paymentgate",
+        "decorator-based-setup-with-aieconomysdk": "/build/sell-mcp-tools#register-tools-with-a-decorator"
+      }
+    },
+    "/ai-economy-sdk/settlement": {
+      "to": "/how-it-works#settle-on-success",
+      "anchors": {
+        "replay-protection": "/how-it-works#replay-protection",
+        "storage": "/production/security#replay-store",
+        "example-a-failed-call-is-not-charged": "/how-it-works#settle-on-success"
+      }
+    },
+    "/glossary": {
+      "to": "/resources/glossary",
+      "anchors": {}
+    },
+    "/guides/networks/localnet": {
+      "to": "/production/networks#localnet",
+      "anchors": {
+        "the-localnet-network-id": "/production/networks#localnet"
+      }
+    },
+    "/guides/networks/mainnet": {
+      "to": "/production/mainnet",
+      "anchors": {
+        "production-checklist": "/production/mainnet#go-live-checklist",
+        "client-configuration": "/production/mainnet#server-configuration"
+      }
+    },
+    "/guides/networks/testnet": {
+      "to": "/production/networks#testnet",
+      "anchors": {
+        "accept-testnet-usdc": "/production/mainnet#accept-usdc",
+        "a-real-testnet-payment": "/production/networks#testnet"
+      }
+    },
+    "/installation": {
+      "to": "/reference/packages",
+      "anchors": {
+        "localnet": "/production/networks#localnet",
+        "requirements": "/reference/packages",
+        "python": "/reference/packages#install",
+        "javascript-and-typescript": "/reference/packages#install",
+        "verify-the-installation": "/reference/packages#install"
+      }
+    },
+    "/networks": {
+      "to": "/production/networks",
+      "anchors": {
+        "caip-2-network-ids": "/production/networks#network-ids",
+        "accepted-network-names": "/production/networks#network-ids",
+        "resolve-networks-in-code": "/production/networks#network-ids"
+      }
+    },
+    "/resources/error-codes": {
+      "to": "/reference/errors",
+      "anchors": {}
+    },
+    "/resources/http-402-reference": {
+      "to": "/reference/protocol/http-402",
+      "anchors": {}
+    },
+    "/resources/security": {
+      "to": "/production/security",
+      "anchors": {}
+    },
+    "/tutorials/browser-paywall": {
+      "to": "/build/pay-from-browser#build-the-paywall",
+      "anchors": {}
+    },
+    "/tutorials/index": {
+      "to": "/quickstart",
+      "anchors": {}
+    },
+    "/tutorials/localnet-to-mainnet": {
+      "to": "/production/mainnet",
+      "anchors": {
+        "a-configuration-module": "/production/mainnet#one-configuration-for-every-network",
+        "dry-run": "/production/mainnet#one-configuration-for-every-network",
+        "roll-out": "/production/mainnet#go-live-checklist"
+      }
+    },
+    "/tutorials/paid-mcp-tool": {
+      "to": "/build/sell-mcp-tools",
+      "anchors": {}
+    },
+    "/tutorials/usdc-on-mainnet": {
+      "to": "/production/mainnet#accept-usdc",
+      "anchors": {
+        "step-5-test-against-live-state-without-funds": "/production/mainnet#simulate-on-mainnet"
+      }
+    },
+    "/x402-algorand/avm-exact-scheme": {
+      "to": "/reference/protocol/avm-exact-scheme",
+      "anchors": {
+        "manual-verification-and-settlement": "/build/facilitator#verify-and-settle-without-http",
+        "with-a-fee-payer-two-transactions": "/reference/protocol/avm-exact-scheme#atomic-group-layout",
+        "without-a-fee-payer-one-transaction": "/reference/protocol/avm-exact-scheme#atomic-group-layout"
+      }
+    },
+    "/x402-algorand/client": {
+      "to": "/build/pay-from-python#pay-http-apis",
+      "anchors": {
+        "spend-controls": "/build/pay-from-python#spend-controls",
+        "create-a-client-signer": "/build/pay-from-python#signers",
+        "pay-a-challenge-by-hand": "/build/pay-from-python#pay-a-challenge-by-hand",
+        "register-the-scheme": "/build/pay-from-python#registration-options-and-policies",
+        "what-create_payment_payload-builds": "/build/pay-from-python#pay-a-challenge-by-hand"
+      }
+    },
+    "/x402-algorand/custom-networks": {
+      "to": "/production/networks#private-networks",
+      "anchors": {
+        "caip-2-on-algorand": "/production/networks#network-ids",
+        "network-utilities": "/production/networks#x402-algorand-network-utilities",
+        "cross-network-protection": "/production/security#payments-from-another-network",
+        "simulate-on-public-networks": "/production/networks#check-payments-without-funds",
+        "caip2_from_genesis_hash": "/production/networks#x402-algorand-network-utilities",
+        "get_genesis_hash": "/production/networks#x402-algorand-network-utilities",
+        "normalize_network": "/production/networks#x402-algorand-network-utilities",
+        "register_network": "/production/networks#private-networks"
+      }
+    },
+    "/x402-algorand/facilitator": {
+      "to": "/build/facilitator",
+      "anchors": {
+        "create-a-facilitator-signer": "/build/facilitator#create-the-facilitator",
+        "verify-and-settle": "/build/facilitator#what-verify-and-settle-do",
+        "what-the-facilitator-does": "/build/facilitator#what-verify-and-settle-do",
+        "example": "/build/facilitator#verify-and-settle-without-http"
+      }
+    },
+    "/x402-algorand/fastapi": {
+      "to": "/build/paywall-http-api#fastapi",
+      "anchors": {
+        "how-the-middleware-behaves": "/build/paywall-http-api#what-the-middleware-does"
+      }
+    },
+    "/x402-algorand/flask": {
+      "to": "/build/paywall-http-api#flask",
+      "anchors": {}
+    },
+    "/x402-algorand/httpx-requests": {
+      "to": "/build/pay-from-python#pay-http-apis",
+      "anchors": {}
+    },
+    "/x402-algorand/overview": {
+      "to": "/build/paywall-http-api",
+      "anchors": {
+        "migrating-from-0-1-x": "/reference/packages#x402-algorand-from-0-1-x",
+        "upgrading-to-0-3": "/reference/packages#x402-algorand-0-3",
+        "signers": "/build/facilitator#create-the-facilitator",
+        "errors": "/reference/errors#x402-algorand-exceptions",
+        "network-ids": "/production/networks#network-ids",
+        "what-lives-where": "/build/paywall-http-api#the-parts-and-where-they-come-from",
+        "register-the-scheme": "/build/paywall-http-api#the-parts-and-where-they-come-from",
+        "licence": "/build/paywall-http-api#the-parts-and-where-they-come-from"
+      }
+    },
+    "/x402-algorand/resource-server": {
+      "to": "/build/paywall-http-api#set-the-price-of-a-route",
+      "anchors": {
+        "requirement-enhancement": "/build/paywall-http-api#set-the-price-of-a-route"
+      }
+    },
+    "/x402-avm-js/browser-wallets": {
+      "to": "/build/pay-from-browser#connect-a-wallet",
+      "anchors": {
+        "what-happens-when-you-pay": "/build/pay-from-browser#the-whole-flow-in-one-call"
+      }
+    },
+    "/x402-avm-js/identity": {
+      "to": "/build/identity",
+      "anchors": {
+        "verify-on-the-server": "/build/identity#create-and-verify-a-proof",
+        "create-the-header": "/build/identity#create-and-verify-a-proof",
+        "cross-language-example": "/build/identity#examples"
+      }
+    },
+    "/x402-avm-js/networks": {
+      "to": "/production/networks",
+      "anchors": {
+        "localnet": "/production/networks#localnet",
+        "simulate-on-public-networks": "/production/networks#check-payments-without-funds",
+        "presets": "/production/networks#networks-at-a-glance",
+        "caip-2-ids": "/production/networks#network-ids",
+        "resolve-networks": "/production/networks#network-ids"
+      }
+    },
+    "/x402-avm-js/node": {
+      "to": "/build/pay-from-node",
+      "anchors": {
+        "sign-with-a-local-key": "/build/pay-from-node#sign-with-a-key-from-the-environment",
+        "sign-with-kmd-on-localnet": "/build/pay-from-node#a-runnable-localnet-example",
+        "what-happens-on-chain": "/build/pay-from-node#a-runnable-localnet-example"
+      }
+    },
+    "/x402-avm-js/overview": {
+      "to": "/build/pay-from-browser",
+      "anchors": {
+        "migrating-from-0-2": "/reference/packages#x402-avm-js-from-0-2",
+        "upgrading-to-0-4": "/reference/packages#x402-avm-js-0-4",
+        "spend-controls": "/build/pay-from-browser#spend-controls",
+        "errors": "/reference/errors#x402-avm-js-errors",
+        "runtimes": "/reference/packages#install",
+        "testing-the-package": "/resources/ai-tools#test-modes",
+        "pay-a-402-response": "/build/pay-from-browser#the-whole-flow-in-one-call",
+        "exports": "/reference/js/index"
+      }
+    }
+  }
+}

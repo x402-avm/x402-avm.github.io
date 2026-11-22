@@ -1,0 +1,107 @@
+---
+title: "Run a facilitator"
+description: "Verify and settle Algorand x402 payments with x402Facilitator, sponsor the network fees, and drive the scheme directly without HTTP."
+---
+
+Use this page when you run the facilitator yourself: as a separate service for several resource servers, or by calling verify and settle directly. If you use `PaymentGate` or the in-process setup on [Paywall an HTTP API](/build/paywall-http-api), a facilitator is already running and you can skip this page.
+
+## Verify and settle without HTTP
+
+This script builds a 10,000 microALGO payment with the client scheme, then verifies and settles it with the facilitator scheme, on [LocalNet](/production/networks#localnet):
+
+{/* example: localnet/manual_flow.py */}
+
+```python localnet/manual_flow.py
+"""The x402 exact-scheme lifecycle on LocalNet with no web framework.
+
+Requirements -> client signs payload -> facilitator verifies -> facilitator settles on-chain.
+
+    python localnet/manual_flow.py
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from x402.schemas import PaymentPayload, PaymentRequirements
+from x402_algorand import PayerAvmSigner, ServerAvmSigner, caip2_from_genesis_hash
+from x402_algorand.exact.client import ExactAvmScheme as ClientScheme
+from x402_algorand.exact.facilitator import ExactAvmScheme as FacilitatorScheme
+
+from _localnet import ALGOD, ALGOD_TOKEN, ALGOD_URL, new_funded_account
+
+network = caip2_from_genesis_hash(ALGOD.suggested_params().gh)
+server_sk, server_addr = new_funded_account()
+client_sk, client_addr = new_funded_account()
+print(f"server {server_addr}\nclient {client_addr}\nnetwork {network}")
+
+client_scheme = ClientScheme(PayerAvmSigner.from_private_key(client_sk), algod_url=ALGOD_URL, algod_token=ALGOD_TOKEN)
+facilitator = FacilitatorScheme(ServerAvmSigner.from_private_key(server_sk, ALGOD))
+
+requirements = PaymentRequirements(
+    scheme="exact", network=network, asset="0", amount="10000", pay_to=server_addr,
+    max_timeout_seconds=300, extra={"feePayer": server_addr},
+)
+payload = PaymentPayload(
+    x402_version=2, payload=client_scheme.create_payment_payload(requirements), accepted=requirements
+)
+
+verified = facilitator.verify(payload, requirements)
+assert verified.is_valid, verified.invalid_reason
+print(f"verified payment from {verified.payer}")
+
+settled = facilitator.settle(payload, requirements)
+assert settled.success, settled.error_reason
+round_ = ALGOD.pending_transaction_info(settled.transaction)["confirmed-round"]
+print(f"settled {settled.transaction} in round {round_}")
+```
+
+<sub>Source: [examples/localnet/manual_flow.py](https://github.com/x402-avm/examples/blob/main/localnet/manual_flow.py)</sub>
+
+{/* /example */}
+
+```bash
+python localnet/manual_flow.py
+```
+
+It prints both addresses, the network, the verification result, the settled transaction id and the confirmed round.
+
+## Create the facilitator
+
+The facilitator needs a signer that implements [`FacilitatorAvmSigner`](/reference/python/x402-algorand/facilitator-avm-signer): it manages one or more fee payer accounts and talks to algod. [`ServerAvmSigner`](/reference/python/x402-algorand/server-avm-signer) is a ready-made one:
+
+```python
+import os
+from algosdk.v2client import algod
+from x402 import x402Facilitator
+from x402_algorand import ALGORAND_MAINNET_CAIP2, ServerAvmSigner
+from x402_algorand.exact import register_exact_avm_facilitator
+
+algod_client = algod.AlgodClient("", "https://mainnet-api.algonode.cloud")
+signer = ServerAvmSigner.from_mnemonic(os.environ["FEE_PAYER_MNEMONIC"], algod_client)
+
+facilitator = x402Facilitator()
+register_exact_avm_facilitator(facilitator, signer, ALGORAND_MAINNET_CAIP2)
+```
+
+- Constructors: `from_private_key(key, algod_client=None, *, algod_url=None, algod_token=None)`, `from_mnemonic(...)`, or `ServerAvmSigner([key1, key2], algod_client)` for several fee payers, of which the facilitator picks one at random per request. `ServerAvmSigner` also implements `ClientAvmSigner`.
+- With an algod client (or `algod_url=` / `algod_token=`), the first use for a network checks that the node's genesis hash matches it and raises `NetworkMismatchError` otherwise. Without one, the signer uses the algod URL configured for the network in `NETWORK_CONFIGS`: AlgoNode for MainNet and TestNet, or a network added with [`register_network`](/production/networks#private-networks).
+- `simulate_group` raises `SimulationError` when algod reports that the group would fail; `sign_transaction` / `sign_group` raise `SigningError` for an address the signer does not manage. A malformed key or mnemonic also raises `SigningError`.
+- Keys stay in private attributes and are not shown by `repr()`, exception messages or logs. `signer.address` is the first managed address, handy as `pay_to`.
+
+To keep fee payer keys in a KMS or HSM, implement the protocol yourself. `DefaultAvmSigner(private_key, algod_client=...)` from `ai-economy-sdk` also implements it.
+
+`register_exact_avm_facilitator` takes one network id or a list, and also registers the scheme for the x402 v1 names `algorand-mainnet` and `algorand-testnet`. Use the sync `x402FacilitatorSync` with Flask and other WSGI code.
+
+## What verify and settle do
+
+- `facilitator.verify(payload, requirements)` checks the group against the requirement, checks every transaction sent by one of its own addresses (a 0-amount self-payment, no close-out or rekey, fee at most 16,000 microALGO), signs the fee payer transaction and simulates the group on algod. It returns `VerifyResponse(is_valid=True, payer=<buyer>)`, or `is_valid=False` with `invalid_reason` set to an [error code](/reference/errors). Nothing is submitted.
+- `facilitator.settle(payload, requirements)` verifies again, signs the fee payer transaction, submits the group, waits up to 4 rounds for confirmation and returns `SettleResponse(success=True, transaction=<txid>, network=<id>)`. `transaction` is the ID of the buyer's payment (`paymentGroup[paymentIndex]`), as the specification requires. If submission fails it returns `success=False` with `error_reason="transaction_failed"`.
+
+An invalid payment never raises; `verify()` and `settle()` return a code. The facilitator refuses a payment whose sender is one of its own fee payer addresses (`invalid_exact_avm_payload_fee_payer_transferring_funds`), so the fee payer can never be the buyer. The full order of checks: [AVM exact scheme](/reference/protocol/avm-exact-scheme#verification-steps).
+
+## Next
+
+- [Go to MainNet](/production/mainnet#fund-the-fee-payer): fund the fee payer.
+- [Security](/production/security#abusing-the-fee-payer): what the facilitator refuses to sign.

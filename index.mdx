@@ -1,111 +1,95 @@
 ---
-title: "Introduction"
-description: "Charge per call for MCP tools and HTTP APIs, settled on Algorand with the x402 protocol."
+title: "x402-avm"
+sidebarTitle: "Introduction"
+description: "Let AI agents and apps pay for your tools and APIs per call, in ALGO or USDC, with no accounts and no API keys."
 ---
 
-x402-avm is a set of three open-source packages for selling and buying tool calls with the [x402](/glossary#x402) payment protocol on Algorand. A server answers an unpaid call with HTTP `402 Payment Required` and a price. The client signs an Algorand payment and retries. The server runs the tool, and only if the tool succeeds does it submit the payment to the chain.
+An AI agent that finds a useful tool can't use it if the tool wants a sign-up form, a credit card and an API key. And a tool worth a tenth of a cent per call can't be sold on card rails at all.
 
-x402-avm is an independent project, not affiliated with GoPlausible's x402-avm packages, from which x402-algorand is derived (see [NOTICE](https://github.com/x402-avm/x402-algorand/blob/main/NOTICE)).
+x402-avm fixes both. Your server answers a call with **HTTP 402 Payment Required** and a price. The caller's wallet pays it on Algorand and retries, and the call goes through. There are no accounts, no keys to issue and no invoices. Payment and result come back in the same request, in about three seconds.
 
-<Frame caption="Two-minute demo: a real payment on LocalNet, spend controls, TestNet and MainNet, and these docs.">
+<Frame caption="Two minutes: a real payment on LocalNet, spend limits, TestNet and MainNet.">
   <video controls preload="none" poster="/videos/x402-avm-demo-poster.png" className="w-full aspect-video rounded-xl" src="/videos/x402-avm-demo.mp4"></video>
 </Frame>
 
+## What you can build
+
 <Columns cols={3}>
-  <Card title="ai-economy-sdk" icon="server" href="/ai-economy-sdk/overview">
-    Python, MIT. Charge for every MCP tool call, and pay for tools from Python clients and agents.
+  <Card title="Sell an MCP tool" icon="store" href="/build/sell-mcp-tools">
+    Put a price on each tool of a FastMCP server. Any MCP client with a wallet can call it.
   </Card>
-  <Card title="x402-algorand" icon="puzzle" href="/x402-algorand/overview">
-    Python, Apache-2.0. The Algorand "exact" payment scheme as a plugin for the official x402 Python SDK.
+  <Card title="Paywall an HTTP API" icon="lock" href="/build/paywall-http-api">
+    Charge per request on a FastAPI or Flask route, using the official x402 SDK.
   </Card>
-  <Card title="x402-avm-js" icon="globe" href="/x402-avm-js/overview">
-    TypeScript, MIT. Decode a 402, build and sign the payment with any Algorand wallet, in the browser or in Node.
+  <Card title="Let your agent pay" icon="bot" href="/build/ai-agents">
+    Give an agent a wallet and a budget. It pays for tools on its own and refuses anything over its limits.
   </Card>
 </Columns>
 
-## Why x402 on Algorand
+## Why it works for both sides
 
-- **Per-call pricing, no accounts.** The price travels in the `402` response. Callers need a funded Algorand account, not an API key or a billing relationship.
-- **Buyers only pay when the tool works.** `PaymentGate` verifies the signed payment, runs the tool, and settles on chain only if the tool succeeds. A failed call costs the buyer nothing. See [How it works](/how-it-works#settle-on-success).
-- **Buyers pay no network fee.** The server's fee payer covers the fees of the two-transaction atomic group, so the buyer's balance drops by exactly the price.
-- **ALGO or USDC.** Prices are in the base units of ALGO or any Algorand Standard Asset, such as USDC (`31566704` on MainNet).
-- **Works for agents.** An AI agent can pay for tools within spend limits it controls. See [For AI agents](/agents/overview).
+**For the seller,** a price is one line of code: `prices={"summarize": 5000}`. Payments land directly in your Algorand account, in ALGO or USDC, with nothing in between taking a cut. The payment is checked before your tool runs.
 
-## How the packages fit together
+**For the buyer,** you pay only when the call succeeds. The server checks the payment, runs the tool, and submits the payment to the chain only if the tool returned a result. If the tool fails, nothing is charged. The seller pays the network fee, so the buyer's balance goes down by exactly the price shown.
 
-| You want to | Use |
-|---|---|
-| Sell MCP tools per call (Python server) | `ai-economy-sdk`: [`PaymentGate`](/ai-economy-sdk/server) |
-| Call paid MCP tools from Python, including from an agent | `ai-economy-sdk`: [`paid_mcp_session`](/ai-economy-sdk/client) |
-| Protect a FastAPI or Flask endpoint, or run an x402 facilitator | `x402-algorand` with the official [`x402`](https://github.com/x402-foundation/x402) SDK |
-| Pay a 402 from a browser wallet or a Node process | `x402-avm-js` |
+**For whoever owns the agent,** spend limits are checked before anything is signed: a maximum per call, and which assets, networks and recipients may be paid. Both clients apply a limit even if you set none, refusing anything over 1 ALGO or 1 USDC per call until you raise it.
 
-`ai-economy-sdk` depends on `x402-algorand`, which depends on the official `x402` package. Installing `ai-economy-sdk` installs all three Python packages.
-
-## A paid tool in a few lines
-
-Excerpts. The [Quickstart](/quickstart) runs a complete version.
+## How it looks in code
 
 <CodeGroup>
-```python server.py
+```python Sell (server.py)
 from fastmcp import FastMCP
-from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+from ai_economy_sdk import PaymentGate
 
-mcp = FastMCP("QuickstartServer")
+mcp = FastMCP("Summarizer")
 
 @mcp.tool()
-def echo(text: str) -> str:
-    """Echo back input text."""
-    return f"echo: {text}"
+def summarize(text: str) -> str:
+    return text[:200]
 
 gate = PaymentGate(
-    signer=DefaultAvmSigner(server_sk, algod_client=algod_client),
-    network="localnet",
-    pay_to=server_addr,
-    asset_id=0,
-    prices={"echo": 5000},  # microALGO per call
+    signer=signer,                  # your server's key; it pays the network fee
+    network="testnet",
+    pay_to=my_address,              # where the money goes
+    prices={"summarize": 5000},     # 0.005 ALGO per call
 )
-app = gate.wrap(mcp, transport="streamable-http")  # ASGI app, MCP endpoint POST /mcp
+app = gate.wrap(mcp, transport="streamable-http")
 ```
 
-```python client.py
+```python Buy (agent.py)
 from ai_economy_sdk import paid_mcp_session
 
-async with paid_mcp_session("http://127.0.0.1:9201/mcp", buyer_sk, "localnet") as session:
-    result = await session.call_tool("echo", {"text": "hello world"})
-    print(result.content[0].text)  # echo: hello world
+async with paid_mcp_session(url, wallet_key, "testnet") as session:
+    result = await session.call_tool("summarize", {"text": article})
 ```
 
-```ts client.ts
+```ts Buy (browser)
 import { algodClient, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
 
-const algod = algodClient('localnet');
 const res = await fetch(url);
 if (res.status === 402) {
   const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
-  const header = await payForRequirement(
-    required, myAddress, algod,
-    (txns, indexes) => wallet.signTransactions(txns, indexes),
-    { maxAmount: 10_000n }, // refuse anything above 10,000 base units (default cap: 1,000,000)
-  );
-  await fetch(url, { headers: { 'PAYMENT-SIGNATURE': header } });
+  const payment = await payForRequirement(required, address, algodClient('testnet'),
+    (txns, idx) => wallet.signTransactions(txns, idx));
+  await fetch(url, { headers: { 'PAYMENT-SIGNATURE': payment } });
 }
 ```
 </CodeGroup>
 
-## Next steps
+The [Quickstart](/quickstart) runs a complete version on your machine in about five minutes, with test money.
 
-<Columns cols={2}>
-  <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Run a paid MCP tool on LocalNet and pay for it from Python and JavaScript.
-  </Card>
-  <Card title="How it works" icon="workflow" href="/how-it-works">
-    The 402 flow, the atomic group, settle-on-success, identity, passes and replay protection.
-  </Card>
-  <Card title="Networks" icon="network" href="/networks">
-    LocalNet, TestNet and MainNet, and the CAIP-2 network ids.
-  </Card>
-  <Card title="For AI agents" icon="bot" href="/agents/overview">
-    How agents pay for tools safely, and how to give these docs to your AI tools.
-  </Card>
-</Columns>
+## What's in the box
+
+x402-avm is three open-source packages. Most projects need only one.
+
+| Package | Install | Use it to |
+|---|---|---|
+| [`ai-economy-sdk`](/build/sell-mcp-tools) | `pip install ai-economy-sdk` | Sell MCP tools, and pay for them from Python and agents |
+| [`x402-algorand`](/build/paywall-http-api) | `pip install x402-algorand` | Add Algorand to the official [x402](https://www.x402.org) SDK, for HTTP APIs and facilitators |
+| [`x402-avm-js`](/build/pay-from-browser) | `npm install x402-avm-js algosdk` | Pay from a browser wallet or Node.js |
+
+All three follow the open x402 standard and the official [Algorand `exact` scheme](/reference/protocol/avm-exact-scheme), so they work with any other x402 software on Algorand.
+
+<Note>
+x402-avm is an independent open-source project. It is not affiliated with GoPlausible's x402-avm packages, from which x402-algorand is derived (see [NOTICE](https://github.com/x402-avm/x402-algorand/blob/main/NOTICE)).
+</Note>

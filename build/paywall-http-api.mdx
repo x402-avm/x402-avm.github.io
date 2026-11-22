@@ -1,0 +1,227 @@
+---
+title: "Paywall an HTTP API"
+description: "Charge per request on a FastAPI or Flask route with the official x402 SDK and the Algorand scheme from x402-algorand."
+---
+
+By the end of this page, `GET /weather` on your FastAPI or Flask app costs 10,000 microALGO per request, and any x402 client on Algorand can pay it. You use the official [x402 Python SDK](https://github.com/x402-foundation/x402) for the HTTP side, and `x402-algorand` adds Algorand to it.
+
+```bash
+pip install x402-algorand==0.3.0 fastapi uvicorn   # or: x402-algorand "x402[flask]"
+```
+
+This installs the official `x402` package (2.28 or later, below 3) and `py-algorand-sdk`.
+
+## FastAPI
+
+The server below is the payee, the fee payer and an in-process facilitator, so the buyer pays exactly the price. It runs on [LocalNet](/production/networks#localnet), port 9211.
+
+{/* example: localnet/fastapi_paywall.py */}
+
+```python localnet/fastapi_paywall.py
+"""FastAPI paywall: GET /weather costs 10,000 microALGO on LocalNet (port 9211).
+
+The server is payee, fee payer and in-process facilitator, so the buyer pays exactly the price.
+
+    python localnet/fastapi_paywall.py
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import uvicorn
+from fastapi import FastAPI
+from x402 import x402Facilitator, x402ResourceServer
+from x402.http.middleware.fastapi import payment_middleware
+from x402_algorand import ServerAvmSigner, caip2_from_genesis_hash
+from x402_algorand.exact import register_exact_avm_facilitator, register_exact_avm_server
+
+from _localnet import ALGOD, new_funded_account
+
+network = caip2_from_genesis_hash(ALGOD.suggested_params().gh)
+signer = ServerAvmSigner.from_private_key(new_funded_account()[0], ALGOD)
+
+facilitator = x402Facilitator()
+register_exact_avm_facilitator(facilitator, signer, network)
+server = x402ResourceServer(facilitator)
+register_exact_avm_server(server)
+
+routes = {"GET /weather": {"accepts": [{
+    "scheme": "exact", "price": {"amount": "10000", "asset": "0"},
+    "network": network, "pay_to": signer.address,
+}]}}
+
+app = FastAPI()
+app.middleware("http")(payment_middleware(routes, server))
+
+
+@app.get("/weather")
+async def weather():
+    return {"city": "Boston", "temperature": 68, "network": network}
+
+
+if __name__ == "__main__":
+    print(f"FastAPI paywall on http://127.0.0.1:9211/weather, pay to {signer.address}")
+    uvicorn.run(app, host="127.0.0.1", port=9211, log_level="warning")
+```
+
+<sub>Source: [examples/localnet/fastapi_paywall.py](https://github.com/x402-avm/examples/blob/main/localnet/fastapi_paywall.py)</sub>
+
+{/* /example */}
+
+```bash
+python localnet/fastapi_paywall.py
+```
+
+```text
+FastAPI paywall on http://127.0.0.1:9211/weather, pay to <server address>
+```
+
+## Flask
+
+Flask is synchronous, so it uses the sync classes `x402FacilitatorSync` and `x402ResourceServerSync`, and `payment_middleware(app, routes, server)` from `x402.http.middleware.flask`, which wraps `app.wsgi_app`. Same route, port 9212:
+
+{/* example: localnet/flask_paywall.py */}
+
+```python localnet/flask_paywall.py expandable
+"""Flask paywall: GET /weather costs 10,000 microALGO on LocalNet (port 9212).
+
+Uses the synchronous x402 classes; the server is payee, fee payer and facilitator.
+
+    python localnet/flask_paywall.py
+"""
+
+import logging
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from flask import Flask, jsonify
+from werkzeug.serving import run_simple
+from x402 import x402FacilitatorSync, x402ResourceServerSync
+from x402.http.middleware.flask import payment_middleware
+from x402_algorand import ServerAvmSigner, caip2_from_genesis_hash
+from x402_algorand.exact import register_exact_avm_facilitator, register_exact_avm_server
+
+from _localnet import ALGOD, new_funded_account
+
+network = caip2_from_genesis_hash(ALGOD.suggested_params().gh)
+signer = ServerAvmSigner.from_private_key(new_funded_account()[0], ALGOD)
+
+facilitator = x402FacilitatorSync()
+register_exact_avm_facilitator(facilitator, signer, network)
+server = x402ResourceServerSync(facilitator)
+register_exact_avm_server(server)
+
+routes = {"GET /weather": {"accepts": [{
+    "scheme": "exact", "price": {"amount": "10000", "asset": "0"},
+    "network": network, "pay_to": signer.address,
+}]}}
+
+app = Flask(__name__)
+payment_middleware(app, routes, server)
+
+
+@app.get("/weather")
+def weather():
+    return jsonify(city="Boston", temperature=68, network=network)
+
+
+if __name__ == "__main__":
+    print(f"Flask paywall on http://127.0.0.1:9212/weather, pay to {signer.address}")
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)  # quiet dev-server banner and access log
+    run_simple("127.0.0.1", 9212, app)
+```
+
+<sub>Source: [examples/localnet/flask_paywall.py](https://github.com/x402-avm/examples/blob/main/localnet/flask_paywall.py)</sub>
+
+{/* /example */}
+
+## Test it with a paying client
+
+```bash
+python localnet/flask_paywall.py
+```
+
+In a second terminal (drop `--url` to pay the FastAPI server on 9211):
+
+```bash
+python localnet/httpx_client.py --url http://127.0.0.1:9212/weather
+```
+
+```text
+200 {'city': 'Boston', 'network': 'algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY', 'temperature': 68}
+Paid exactly 10000 microALGO.
+```
+
+The network id is your LocalNet's and differs between machines. The client is explained in [Pay from Python](/build/pay-from-python#pay-http-apis); from JavaScript, use [x402-avm-js](/build/pay-from-node).
+
+## What the middleware does
+
+1. A request to a protected route without payment gets `402` with `PAYMENT-REQUIRED`; the route does not run.
+2. A request with `PAYMENT-SIGNATURE` is verified through the facilitator.
+3. If verification succeeds, the route runs.
+4. After the route returns, the middleware settles the payment and adds a `PAYMENT-RESPONSE` header.
+
+## Set the price of a route
+
+The resource server turns each route into payment requirements. The Algorand scheme accepts these price forms:
+
+| `price` | Meaning |
+|---|---|
+| `{"amount": "10000", "asset": "0"}` | 10,000 microALGO |
+| `{"amount": "50000", "asset": "31566704"}` | 50,000 base units of USDC (0.05 USDC) on MainNet |
+| `{"amount": "50000"}` | No asset: the network's USDC |
+| `"$0.01"`, `0.01` | A dollar amount, converted to the network's USDC (6 decimals) unless a custom money parser handles it |
+
+```python
+routes = {
+    "GET /api/reports": {
+        "accepts": [
+            {
+                "scheme": "exact",
+                "price": {"amount": "50000", "asset": "0"},  # 50,000 microALGO
+                "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+                "pay_to": "YOUR_ALGORAND_ADDRESS",
+            }
+        ]
+    }
+}
+```
+
+Register a parser for dollar amounts with `ExactAvmServerScheme().register_money_parser(parser)`; see the [reference](/reference/python/x402-algorand/exact-avm-server-scheme). To take USDC, the receiving account must [opt in](/production/mainnet#accept-usdc).
+
+When it builds requirements, the Algorand scheme's `enhance_payment_requirements` adds:
+
+- `extra.decimals`: 6, unless the route set it.
+- `extra.feePayer`: a fee payer address of the facilitator. If its signer manages several addresses, one is picked at random, which spreads fee costs. Without a fee payer, the client pays its own fee.
+- `extra.genesisHash` and `extra.genesisId`, when the network is registered.
+
+## The parts and where they come from
+
+| Package | Provides |
+|---|---|
+| `x402` (official SDK) | `x402Client`, `x402ResourceServer`, `x402Facilitator` and their sync variants; payment schemas; spend controls; header encoding; FastAPI and Flask middleware; httpx and requests clients. |
+| `x402_algorand` | Client, server and facilitator implementations of the Algorand exact scheme; `register_exact_avm_*` helpers; signer protocols and the ready-made `PayerAvmSigner` and `ServerAvmSigner`; exceptions; CAIP-2 utilities; transaction decoding and security checks; constants and error codes. |
+
+```python
+from x402 import x402Facilitator, x402ResourceServer
+from x402_algorand.exact import register_exact_avm_facilitator, register_exact_avm_server
+
+facilitator = x402Facilitator()
+register_exact_avm_facilitator(facilitator, facilitator_signer, network)  # verifies, settles, sponsors fees
+
+server = x402ResourceServer(facilitator)
+register_exact_avm_server(server)  # registers the scheme for "algorand:*"
+```
+
+`x402ResourceServer` also accepts a client for a remote facilitator; see the upstream `x402` documentation and [Run a facilitator](/build/facilitator). The facilitator's signer is covered there too.
+
+The upstream SDK also ships EVM and SVM schemes; `x402-algorand` adds the AVM. It is derived from GoPlausible's [`x402-avm`](https://github.com/GoPlausible/x402-avm) 2.0.2 (Apache-2.0) and ships a `NOTICE` file that reproduces the upstream notices and lists the changed files. Licence: Apache License 2.0.
+
+## Next
+
+- [Pay from Python](/build/pay-from-python#pay-http-apis) or [from the browser](/build/pay-from-browser).
+- [Errors and error codes](/reference/errors) for every reason a payment is refused.

@@ -78,7 +78,7 @@ This page combines the changelogs of the three packages: [ai-economy-sdk](https:
 
   - Streamable HTTP support: `PaymentGate.wrap(mcp, transport="streamable-http")` (alias `"http"`) serves the MCP Streamable HTTP transport at `POST /mcp`, stateless by default (`stateless_http=False` enables MCP sessions). `wrap()` also accepts `path=` and other `FastMCP.http_app()` keyword arguments. `AIEconomySDK.build_app(transport=...)` forwards to it.
   - `paid_mcp_session(..., transport=...)` connects over Streamable HTTP or SSE. Without `transport=`, URLs whose path ends in `/mcp` use Streamable HTTP and all others use SSE.
-  - Exception hierarchy, exported from the package: `AIEconomyError`, `ConfigurationError` (a `ValueError`), `UnknownNetworkError`, `AlgodClientRequiredError` (also a `RuntimeError`), `PaymentVerificationError` (a `RuntimeError`), `PaymentRequiredError` and `SettlementError` (FastMCP `ToolError`s). Each also subclasses the type raised at the same place in 0.4.x. See [Errors and error codes](/resources/error-codes#ai-economy-sdk-exceptions).
+  - Exception hierarchy, exported from the package: `AIEconomyError`, `ConfigurationError` (a `ValueError`), `UnknownNetworkError`, `AlgodClientRequiredError` (also a `RuntimeError`), `PaymentVerificationError` (a `RuntimeError`), `PaymentRequiredError` and `SettlementError` (FastMCP `ToolError`s). Each also subclasses the type raised at the same place in 0.4.x. See [Errors and error codes](/reference/errors#ai-economy-sdk-exceptions).
   - Typing module `ai_economy_sdk.types` (`ServerSigner`, `ChainLookup`, `Prices`, `GatePriceFunction`, `ToolPriceFunction`, `SpendControlsArg`, `Transport`), and a `py.typed` marker.
   - `ai_economy_sdk.__version__`.
   - `SettleOnSuccessMiddleware` is exported for apps that build the FastMCP HTTP app themselves.
@@ -94,7 +94,7 @@ This page combines the changelogs of the three packages: [ai-economy-sdk](https:
 
   **x402-avm-js 0.4.0**
 
-  - Spend controls: `maxAmount` (per payment, or per asset), `allowedAssets`, `allowedNetworks`, `allowedPayTo`; exported `SpendControls`, `DEFAULT_MAX_AMOUNT`, `checkSpendControls`. See [Guardrails](/agents/guardrails#javascript-clients).
+  - Spend controls: `maxAmount` (per payment, or per asset), `allowedAssets`, `allowedNetworks`, `allowedPayTo`; exported `SpendControls`, `DEFAULT_MAX_AMOUNT`, `checkSpendControls`. See [Guardrails](/build/pay-from-browser#spend-controls).
   - Typed errors, all extending `X402AvmError` with a stable `code`: `SpendLimitExceededError`, `PaymentNotAllowedError`, `InvalidPaymentRequiredError`, `NoSupportedRequirementError`, `NetworkMismatchError`, `UnknownNetworkError`, `InvalidOptionsError`.
   - `parsePaymentRequired(value: unknown)` for validating untrusted input.
   - `buildExactAvmGroup` rejects requirements whose `extra.genesisHash` or `extra.genesisId` disagrees with the algod parameters, and malformed `payTo`, `feePayer`, `amount` and `asset` values.
@@ -172,7 +172,7 @@ This page combines the changelogs of the three packages: [ai-economy-sdk](https:
   - Identity proofs with `buildIdentityTxn` and `encodeIdentityHeader` (`X-Identity-Txn`).
   - A self-contained test suite that funds LocalNet accounts from the KMD dispenser and creates its own test ASAs.
 
-  Migration notes: [x402-algorand from 0.1.x](/x402-algorand/overview#migrating-from-0-1-x), [ai-economy-sdk from 0.3](/ai-economy-sdk/overview#migrating-from-0-3), [x402-avm-js from 0.2](/x402-avm-js/overview#migrating-from-0-2).
+  Migration notes: [x402-algorand from 0.1.x](/reference/packages#x402-algorand-from-0-1-x), [ai-economy-sdk from 0.3](/reference/packages#ai-economy-sdk-from-0-3), [x402-avm-js from 0.2](/reference/packages#x402-avm-js-from-0-2).
 
   ## ai-economy-sdk 0.3.1
 

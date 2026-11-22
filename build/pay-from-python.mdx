@@ -1,0 +1,259 @@
+---
+title: "Pay from Python"
+description: "Call paid MCP tools with paid_mcp_session, and pay x402 HTTP APIs with the official x402 client, within spend limits you set."
+---
+
+Use this page when Python code needs to pay: an MCP client calling paid tools, or a script calling a paywalled HTTP API. In both cases your code makes ordinary calls; the client answers each `402` with a signed payment and retries.
+
+You need a funded Algorand account on the server's network. Its private key is the base64 string returned by `algosdk.account.generate_account()` or `algosdk.mnemonic.to_private_key()`.
+
+## Call paid MCP tools
+
+```bash
+pip install ai-economy-sdk==0.5.1
+```
+
+{/* example: localnet/quickstart_client.py */}
+
+```python localnet/quickstart_client.py
+"""Paid MCP client session using ai-economy-sdk on Algorand LocalNet.
+
+Funds a fresh buyer account via the LocalNet dispenser, establishes a paid MCP
+session to http://127.0.0.1:9201/mcp, calls the 'echo' tool, and verifies the on-chain
+charge.
+
+How to run:
+    1. Start quickstart_server.py in the background
+    2. python localnet/quickstart_client.py
+
+What it prints:
+    Result: echo: hello world
+    Balance drop: 5000 microALGO
+"""
+import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from ai_economy_sdk import AIEconomyError, paid_mcp_session
+from _localnet import ALGOD, new_funded_account
+
+SERVER_URL = "http://127.0.0.1:9201/mcp"
+
+
+async def main() -> None:
+    buyer_sk, buyer_addr = new_funded_account(algos=5)
+    before_balance = ALGOD.account_info(buyer_addr)["amount"]
+
+    try:
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            result = await session.call_tool("echo", {"text": "hello world"})
+            print(f"Result: {result.content[0].text}")
+    except AIEconomyError as err:  # spend controls refused the price (SpendLimitExceededError, 0.5.1+), settlement failed, bad config ...
+        raise SystemExit(f"Paid call failed: {err}")
+
+    after_balance = ALGOD.account_info(buyer_addr)["amount"]
+    drop = before_balance - after_balance
+    print(f"Balance drop: {drop} microALGO")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+<sub>Source: [examples/localnet/quickstart_client.py](https://github.com/x402-avm/examples/blob/main/localnet/quickstart_client.py)</sub>
+
+{/* /example */}
+
+`paid_mcp_session` yields an initialized `mcp.ClientSession`, so every MCP client method works. Listing tools is free; only `tools/call` is priced. Run it against the [Quickstart](/quickstart) server.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `sse_url` | required | The server's MCP endpoint: `.../mcp` for Streamable HTTP or `.../sse` for SSE. The name is kept from 0.4; it takes either. |
+| `private_key` | required | Base64 Algorand private key of the buyer. |
+| `network` | required | `"mainnet"`, `"testnet"`, `"localnet"`, or a CAIP-2 id. |
+| `algod_url`, `algod_token` | `None` | algod endpoint. Defaults to AlgoNode for MainNet and TestNet, `http://localhost:4001` for LocalNet. |
+| `identity` | `True` | Send [identity headers](/how-it-works#identity-proofs) on every request, so the server can apply passes, subscriptions and per-caller prices. |
+| `timeout` | `30.0` | HTTP timeout in seconds. Stream reads allow up to 300 seconds. |
+| `spend_controls` | `None` | Limits checked before signing; see [below](#spend-controls). |
+| `transport` | `None` | Keyword-only: `"streamable-http"` or `"sse"`. When omitted, URLs whose path ends in `/mcp` use Streamable HTTP and all others SSE. Any other value raises `ConfigurationError`. |
+
+Use the transport the server serves: `.../mcp` for `transport="streamable-http"`, `.../sse` for `transport="sse"`. Full reference: [`paid_mcp_session`](/reference/python/ai-economy-sdk/paid-mcp-session).
+
+## Spend controls
+
+Both clients on this page use the official `x402` client, which checks every payment against spend controls **before signing**. A refused payment signs nothing:
+
+- `paid_mcp_session` raises `SpendLimitExceededError` (an `AIEconomyError`, exported from `ai_economy_sdk`) from the `async with` block. Its message includes the amount and asset the server asked for; x402's `PaymentError` (caused by `NoMatchingRequirementsError`) is the `__cause__`. In 0.5.0 the refusal arrived as an `ExceptionGroup` and over SSE the session could hang; fixed in 0.5.1.
+- `x402Client` raises `NoMatchingRequirementsError`; through the httpx and requests wrappers it surfaces as the wrapper's `PaymentError`.
+
+**Defaults:** ALGO (`"0"`) on every Algorand network and USDC on MainNet (`"31566704"`) and TestNet (`"10458941"`), at most `$1` per payment (`DEFAULT_MAX_AMOUNT_PER_PAYMENT`). A dollar cap is converted with 6 decimals, so `$1` is 1,000,000 base units: 1 USDC, and also 1 ALGO whatever ALGO's market price is.
+
+| `spend_controls=` | Effect |
+|---|---|
+| `None` (default) | The defaults above. |
+| `{"max_amount_per_payment": "$0.25"}` | Same assets, cap of 250,000 base units. |
+| `{"max_amount_per_payment": False}` | Same assets, no cap. |
+| `{"allowed_assets": True}` | Any asset; the cap still applies to the default assets. |
+| `{"allowed_assets": [{...}]}` | The default assets plus the listed ones, each with an optional cap in base units. |
+| `False` | No controls at all. Never use this for an agent. |
+
+Allow another ASA with its own cap. A per-asset cap is an integer string in base units; a dollar value raises `ValueError`:
+
+```python
+spend_controls = {
+    "allowed_assets": [{
+        "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+        "asset": "12345678",                  # ASA id
+        "max_amount_per_payment": "5000000",  # base units, not dollars
+    }]
+}
+async with paid_mcp_session(url, key, "mainnet", spend_controls=spend_controls) as session: ...
+```
+
+With an `x402Client`, pass the same dictionary to `client.set_spend_controls(...)` (or `False` to turn them off), or use `x402Client.from_config(x402ClientConfig(schemes=..., spend_controls=...))`. `x402Client.__init__` takes only `payment_requirements_selector`.
+
+<Warning>
+  Spend controls cap each payment, not the total. Fund the paying account with only what it may spend. For agents, see [AI agents](/build/ai-agents#set-limits).
+</Warning>
+
+## Pay HTTP APIs
+
+```bash
+pip install x402-algorand==0.3.0
+```
+
+Register the Algorand scheme on an `x402Client` with a signer, then wrap `httpx`. This pays the [FastAPI paywall](/build/paywall-http-api) on port 9211:
+
+{/* example: localnet/httpx_client.py */}
+
+```python localnet/httpx_client.py
+"""HTTPX client that pays x402 paywalls automatically on LocalNet.
+
+Start fastapi_paywall.py (port 9211) or flask_paywall.py (9212) first, then:
+
+    python localnet/httpx_client.py [--url http://127.0.0.1:9211/weather]
+"""
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from x402 import x402Client
+from x402.http.clients.httpx import wrapHttpxWithPayment
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import register_exact_avm_client
+
+from _localnet import ALGOD, ALGOD_TOKEN, ALGOD_URL, new_funded_account
+
+
+async def main(url: str) -> None:
+    sk, addr = new_funded_account(5)
+    before = ALGOD.account_info(addr)["amount"]
+
+    client = x402Client()  # default spend controls allow ALGO up to 1,000,000 microALGO
+    register_exact_avm_client(
+        client, PayerAvmSigner.from_private_key(sk), algod_url=ALGOD_URL, algod_token=ALGOD_TOKEN
+    )
+    async with wrapHttpxWithPayment(client) as http:
+        response = await http.get(url, timeout=30.0)
+    print(response.status_code, response.json())
+
+    spent = before - ALGOD.account_info(addr)["amount"]
+    assert response.status_code == 200 and spent == 10_000, (response.status_code, spent)
+    print(f"Paid exactly {spent} microALGO.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--url", default="http://127.0.0.1:9211/weather")
+    asyncio.run(main(parser.parse_args().url))
+```
+
+<sub>Source: [examples/localnet/httpx_client.py](https://github.com/x402-avm/examples/blob/main/localnet/httpx_client.py)</sub>
+
+{/* /example */}
+
+```text
+200 {'city': 'Boston', 'temperature': 68, 'network': 'algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY'}
+Paid exactly 10000 microALGO.
+```
+
+`wrapHttpxWithPayment` returns an `httpx.AsyncClient` with an `x402AsyncTransport`. `x402HttpxClient(x402_client, ...)` is an `httpx.AsyncClient` subclass that does the same and accepts the usual httpx arguments; `paid_mcp_session` uses it. The client does not loop: after a bounded number of paid retries it returns the server's answer, so a `402` after paying reaches your code.
+
+For synchronous code, use `x402ClientSync` and a `requests.Session` (install the extra with `pip install "x402[requests]"`):
+
+```python
+import os
+
+import requests
+from x402 import x402ClientSync
+from x402.http.clients import wrapRequestsWithPayment
+from x402_algorand import PayerAvmSigner
+from x402_algorand.exact import register_exact_avm_client
+
+x402_client = x402ClientSync()
+register_exact_avm_client(x402_client, PayerAvmSigner.from_mnemonic(os.environ["PAYER_MNEMONIC"]),
+                          algod_url="http://localhost:4001", algod_token="a" * 64)
+
+session = wrapRequestsWithPayment(requests.Session(), x402_client)
+response = session.get("http://127.0.0.1:9211/weather")
+```
+
+<Note>
+  `wrapRequestsWithPayment` comes from the official `x402` package and follows its documented usage. The examples repository runs the httpx client, not the requests variant.
+</Note>
+
+### Registration options and policies
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `networks` | `None` | Network ids to register. `None` registers the wildcard `algorand:*`. |
+| `policies` | `None` | x402 payment policies, registered with `client.register_policy`. |
+| `algod_url`, `algod_token` | `None` | The algod used for suggested parameters. Without them the scheme uses the network's configured endpoint. |
+
+It also registers the scheme for the x402 v1 names `algorand-mainnet` and `algorand-testnet`.
+
+A policy is a function `(x402_version, requirements) -> requirements` that sees every offer before one is chosen. If it removes them all, the client raises `NoMatchingRequirementsError` and pays nothing:
+
+```python
+MAX_BASE_UNITS = 20_000
+
+def cheap_only(version, requirements):
+    return [r for r in requirements if int(r.amount) <= MAX_BASE_UNITS]
+
+register_exact_avm_client(client, signer, policies=[cheap_only])
+```
+
+`paid_mcp_session` builds its own client and takes `spend_controls`, not policies.
+
+### Signers
+
+The client signs with an object that implements [`ClientAvmSigner`](/reference/python/x402-algorand/client-avm-signer): an `address`, and a method that signs the transactions at the given indexes of a group and returns `None` for the others. [`PayerAvmSigner`](/reference/python/x402-algorand/payer-avm-signer) is backed by a private key: `PayerAvmSigner.from_private_key(key)` or `PayerAvmSigner.from_mnemonic(words)`.
+
+The key stays in a private attribute and never appears in `repr()`, exception messages or logs. A malformed key or mnemonic raises `SigningError`, and so does a request to sign a transaction sent by another account. To sign with a KMS, a hardware wallet or a remote service, implement the protocol yourself. `DefaultAvmSigner(private_key, algod_client=...)` from `ai-economy-sdk` also implements it.
+
+### Pay a challenge by hand
+
+```python
+from x402.http import decode_payment_required_header, encode_payment_signature_header
+
+payment_required = decode_payment_required_header(response.headers["payment-required"])
+payment_payload = await client.create_payment_payload(payment_required)
+retry = await http_client.get(url, headers={"payment-signature": encode_payment_signature_header(payment_payload)})
+```
+
+`create_payment_payload`:
+
+1. Fetches suggested parameters from algod and checks that algod is on the requirement's network. If not, it raises `NetworkMismatchError("algod is on <id> but the payment is for <id>")` (a `ValueError`). A network with no configured algod and no `algod_url` raises `NetworkError`.
+2. Builds the [two-transaction group](/how-it-works#the-two-transaction-atomic-group) if the requirement has `extra.feePayer` (the fee payer's transaction unsigned, yours with fee 0 and signed), or a single payment with the normal fee if not. Your payment is a `pay` for ALGO, an `axfer` for an ASA.
+3. Returns only signed transaction bytes; the private key never leaves the signer.
+
+## Next
+
+- [AI agents](/build/ai-agents): a budget wallet, limits and price checks for unattended callers.
+- [Networks](/production/networks): move from LocalNet to TestNet.

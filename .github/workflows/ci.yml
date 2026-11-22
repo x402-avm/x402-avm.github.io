@@ -30,6 +30,8 @@ jobs:
           mkdir site
           unzip -q export.zip -d site
           python3 scripts/build_agent_files.py --site site
+          python3 scripts/add_redirects.py --site site
+          python3 scripts/check_site_links.py --site site
           test -s site/llms.txt
           test -s site/llms-full.txt
           test -f site/index.html

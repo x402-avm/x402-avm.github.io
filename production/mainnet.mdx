@@ -1,0 +1,416 @@
+---
+title: "Go to MainNet"
+description: "A go-live checklist for a paid service on Algorand MainNet: USDC pricing and opt-ins, funding the fee payer, keys, workers, one config for every network, simulation and monitoring."
+---
+
+Work through this page when your service runs on [TestNet](/production/networks#testnet) and you are ready to take real money. On MainNet, payments move real ALGO and USDC.
+
+## What changes
+
+| | LocalNet | MainNet | Check |
+|---|---|---|---|
+| Network id | read from algod | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | The id matches the algod's genesis hash |
+| Asset | ALGO (`0`) | USDC (`31566704`) or ALGO | `pay_to` has opted in to USDC |
+| algod, indexer | `localhost:4001`, `localhost:8980` | AlgoNode or your own nodes | Latency, rate limits, uptime; the indexer is needed for passes, subscriptions and bulk discounts |
+| Keys | KMD dispenser | Secret manager or platform secrets | No keys in source code or images |
+| Fee payer | funded from KMD | funded with real ALGO | Low-balance alert |
+| Minimum balance | 0.1 ALGO | 0.1 ALGO plus 0.1 ALGO per opted-in asset | `pay_to` and fee payer cover it |
+| Replay store | in memory | SQLite (`replay_db`) with several workers | Shared by every worker |
+| Clock | any | NTP-synchronized | Identity proofs allow 120 seconds of skew |
+
+## Go-live checklist
+
+<Steps>
+  <Step title="Separate the accounts">
+    Use a receiving account (`pay_to`) where revenue collects, and a separate fee payer account holding only the ALGO needed for fees. In `PaymentGate` the fee payer is the `signer`'s account; `pay_to` can be any address.
+  </Step>
+  <Step title="Opt in to USDC">
+    If you price in USDC, opt `pay_to` in to asset `31566704`; every buyer must opt in too. See [Accept USDC](#accept-usdc).
+  </Step>
+  <Step title="Fund the fee payer">
+    Enough ALGO for the calls you expect plus its minimum balance, with an alert. See [Fund the fee payer](#fund-the-fee-payer).
+  </Step>
+  <Step title="Load keys from a secret store">
+    Never put private keys or mnemonics in source code or images. See [Keys](#keys).
+  </Step>
+  <Step title="Share the replay store across workers">
+    With more than one worker process, pass `replay_db="/var/lib/<service>/replay.db"`. See [Replay store](/production/security#replay-store).
+  </Step>
+  <Step title="Use reliable nodes">
+    The public AlgoNode endpoints need no key. For production traffic, consider your own node or a provider with an SLA, and [point the SDKs at it](/production/networks#use-your-own-nodes).
+  </Step>
+  <Step title="Keep the clock in sync">
+    Run NTP on servers that rely on passes, subscriptions or per-caller prices: identity proofs are accepted only within 120 seconds of the server's clock.
+  </Step>
+  <Step title="Simulate before you go live">
+    Check ALGO and USDC payment groups against MainNet without keys or funds. See [Simulate on MainNet](#simulate-on-mainnet).
+  </Step>
+  <Step title="Monitor">
+    Fee payer balance, settlement failures, replay rejections. See [Monitor](#monitor).
+  </Step>
+</Steps>
+
+## Server configuration
+
+```python server_mainnet.py
+import os
+
+from algosdk import mnemonic
+from algosdk.v2client import algod
+from fastmcp import FastMCP
+from ai_economy_sdk import MAINNET, DefaultAvmSigner, PaymentGate, usdc_asset_id
+
+mcp = FastMCP("AnalysisService")  # your tools: @mcp.tool() ...
+
+algod_client = algod.AlgodClient(
+    os.environ.get("ALGOD_TOKEN", ""),
+    os.environ.get("ALGOD_URL", "https://mainnet-api.algonode.cloud"),
+)
+fee_payer_sk = mnemonic.to_private_key(os.environ["FEE_PAYER_MNEMONIC"])
+
+gate = PaymentGate(
+    signer=DefaultAvmSigner(fee_payer_sk, algod_client=algod_client),
+    network=MAINNET,
+    pay_to=os.environ["VENDOR_ADDRESS"],
+    asset_id=usdc_asset_id(MAINNET),     # 31566704
+    prices={"analyze": 100_000},         # 0.10 USDC
+    replay_db="/var/lib/my-service/replay.db",
+)
+app = gate.wrap(mcp, transport="streamable-http")  # MCP endpoint: POST /mcp
+```
+
+Run it with several workers, for example `uvicorn server_mainnet:app --workers 4`.
+
+On the client side, `paid_mcp_session(server_url, buyer_sk, "mainnet")` uses the public MainNet algod unless you pass `algod_url`. Its default [spend controls](/build/pay-from-python#spend-controls) allow ALGO and MainNet USDC up to 1,000,000 base units per payment. Keep a buyer's balance small: the cap does not limit how many payments a session makes.
+
+## Accept USDC
+
+| Network | USDC asset id | Decimals |
+|---|---|---|
+| MainNet | `31566704` (Circle USDC) | 6 |
+| TestNet | `10458941` | 6 |
+| LocalNet | none: use ALGO or your own ASA | |
+
+`usdc_asset_id(network)` (Python) and `MAINNET.usdc` / `TESTNET.usdc` (JavaScript) return these ids. Prices are integers in base units:
+
+| USDC | Base units |
+|---|---|
+| 1.00 | `1000000` |
+| 0.10 | `100000` |
+| 0.01 | `10000` |
+| 0.005 | `5000` |
+
+**Opt in.** An Algorand account only holds assets it has opted in to, which stops unwanted assets being sent to it. Both the vendor's `pay_to` account and every buyer need a 0-amount transfer of the asset to themselves:
+
+```python
+from algosdk.transaction import AssetTransferTxn, wait_for_confirmation
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
+
+def opt_in(algod_client, address: str, private_key: str, asset_id: int) -> None:
+    sp = algod_client.suggested_params()
+    txn = AssetTransferTxn(sender=address, sp=sp, receiver=address, amt=0, index=asset_id)
+    txid = algod_client.send_transaction(AccountTransactionSigner(private_key).sign_transactions([txn], [0])[0])
+    wait_for_confirmation(algod_client, txid, 4)
+```
+
+Each opt-in raises the account's minimum balance by 0.1 ALGO, so the account needs that ALGO first. If either side has not opted in, the facilitator's simulation fails with `transaction_simulation_failed`, and the node's message in `invalid_message` names the account.
+
+**Fees stay in ALGO.** The buyer spends only USDC; the fee payer spends 2,000 microALGO per call ([why](/how-it-works#the-two-transaction-atomic-group)). The [fee floor](/build/pricing#the-fee-floor) does not apply to USDC prices.
+
+**For an HTTP API** with `x402-algorand`, put the asset in the route price: `{"amount": "50000", "asset": "31566704"}`.
+
+**Clients** allow MainNet and TestNet USDC by default, up to 1 USDC per payment. Buyers with higher prices raise the cap, for example `spend_controls={"max_amount_per_payment": "$5"}`.
+
+**On TestNet**, use asset `10458941` and get test USDC from Circle's faucet at [faucet.circle.com](https://faucet.circle.com):
+
+```python
+from ai_economy_sdk import TESTNET, PaymentGate, usdc_asset_id
+
+gate = PaymentGate(
+    signer=signer,
+    network=TESTNET,
+    pay_to=server_addr,
+    asset_id=usdc_asset_id(TESTNET),  # 10458941
+    default_price=50_000,             # 0.05 USDC per call
+)
+```
+
+## Fund the fee payer
+
+The fee payer pays 2,000 microALGO per settled call, whatever asset the price is in:
+
+| Settled calls | Fees |
+|---|---|
+| 500 | 1 ALGO |
+| 5,000 | 10 ALGO |
+| 50,000 | 100 ALGO |
+
+Add its 0.1 ALGO minimum balance, alert when the balance falls below a threshold (for example 5 ALGO), and top it up from a treasury account. When it runs out, settlement fails and callers get `SettlementError("payment settlement failed: ...")`: they are not charged, but they get no result either.
+
+## Keys
+
+Load keys at start-up from the environment or a secret manager:
+
+```python
+import os
+from algosdk import mnemonic
+
+if "SERVER_PRIVATE_KEY" in os.environ:
+    server_key = os.environ["SERVER_PRIVATE_KEY"]
+elif "SERVER_MNEMONIC" in os.environ:
+    server_key = mnemonic.to_private_key(os.environ["SERVER_MNEMONIC"])
+else:
+    raise RuntimeError("missing server credentials")
+```
+
+`DefaultAvmSigner` keeps the key in process memory and signs only the fee payer transaction of each group. Since 0.5.0 the key is not in a public attribute and `repr()` shows only the address; `DefaultAvmSigner.private_key` is read-only and deprecated, so keep your own reference if you need the key. Hold only working capital in the fee payer.
+
+## One configuration for every network
+
+[`shared/config.py`](https://github.com/x402-avm/examples/blob/main/shared/config.py) builds the endpoints, network id and payment asset from one `NETWORK` variable (`localnet`, `testnet` or `mainnet`): ALGO on LocalNet, USDC on TestNet and MainNet. It reads `NETWORK`, `ALGOD_URL`, `ALGOD_TOKEN`, `INDEXER_URL` and `INDEXER_TOKEN`.
+
+{/* example: shared/config.py */}
+
+```python shared/config.py expandable
+"""Multi-network configuration manager for Algorand payments.
+
+Switches configuration between LocalNet, TestNet, and MainNet using the
+NETWORK environment variable. Selects ALGO for LocalNet development and
+USDC for TestNet and MainNet.
+
+Usage:
+    NETWORK=localnet python shared/config.py
+    NETWORK=testnet python shared/config.py
+    NETWORK=mainnet python shared/config.py
+
+Dry run:
+    python shared/config.py --dry-run
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Literal
+
+from ai_economy_sdk import (
+    MAINNET,
+    TESTNET,
+    endpoints_for,
+    is_public,
+    resolve_network,
+    usdc_asset_id,
+)
+from algosdk.v2client import algod, indexer
+
+NetworkName = Literal["localnet", "testnet", "mainnet"]
+
+
+@dataclass(frozen=True)
+class NetworkConfig:
+    """Resolved runtime configuration for Algorand payments."""
+
+    network_name: NetworkName
+    network_id: str
+    algod_url: str
+    algod_token: str
+    indexer_url: str
+    indexer_token: str
+    asset_id: int
+    asset_name: str
+    asset_decimals: int
+    is_public: bool
+    fee_payer_funded: bool
+
+    def get_algod_client(self) -> algod.AlgodClient:
+        """Construct AlgodClient with configured endpoint and headers."""
+        return algod.AlgodClient(self.algod_token, self.algod_url)
+
+    def get_indexer_client(self) -> indexer.IndexerClient:
+        """Construct IndexerClient with configured endpoint and headers."""
+        return indexer.IndexerClient(self.indexer_token, self.indexer_url)
+
+
+def load_network_config(network_name: str | None = None) -> NetworkConfig:
+    """Load and validate configuration for the requested or environment network.
+
+    Args:
+        network_name: Target network ('localnet', 'testnet', 'mainnet').
+                     Defaults to the NETWORK environment variable, or 'localnet'.
+
+    Returns:
+        Immutable NetworkConfig dataclass.
+    """
+    raw_name = (network_name or os.environ.get("NETWORK", "localnet")).strip().lower()
+
+    if raw_name in ("localnet", "sandbox", "devnet"):
+        name: NetworkName = "localnet"
+        algod_url = os.environ.get("ALGOD_URL", "http://localhost:4001")
+        algod_token = os.environ.get("ALGOD_TOKEN", "a" * 64)
+        indexer_url = os.environ.get("INDEXER_URL", "http://localhost:8980")
+        indexer_token = os.environ.get("INDEXER_TOKEN", "a" * 64)
+
+        # Retrieve genesis hash from local algod if available
+        try:
+            client = algod.AlgodClient(algod_token, algod_url)
+            network_id = resolve_network("localnet", client)
+        except Exception:
+            network_id = "algorand:localnet"
+
+        return NetworkConfig(
+            network_name=name,
+            network_id=network_id,
+            algod_url=algod_url,
+            algod_token=algod_token,
+            indexer_url=indexer_url,
+            indexer_token=indexer_token,
+            asset_id=0,  # ALGO native microALGO
+            asset_name="ALGO",
+            asset_decimals=6,
+            is_public=False,
+            fee_payer_funded=True,
+        )
+
+    if raw_name in ("testnet", "test"):
+        name = "testnet"
+        endpoints = endpoints_for(TESTNET)
+        algod_url = os.environ.get("ALGOD_URL", endpoints.algod_url)
+        algod_token = os.environ.get("ALGOD_TOKEN", endpoints.algod_token)
+        indexer_url = os.environ.get("INDEXER_URL", endpoints.indexer_url)
+        indexer_token = os.environ.get("INDEXER_TOKEN", endpoints.indexer_token)
+        usdc_id = usdc_asset_id(TESTNET) or 10458941
+
+        return NetworkConfig(
+            network_name=name,
+            network_id=TESTNET,
+            algod_url=algod_url,
+            algod_token=algod_token,
+            indexer_url=indexer_url,
+            indexer_token=indexer_token,
+            asset_id=usdc_id,
+            asset_name="USDC",
+            asset_decimals=6,
+            is_public=True,
+            fee_payer_funded=False,  # Operator must fund fee-payer account with ALGO
+        )
+
+    if raw_name in ("mainnet", "prod", "production"):
+        name = "mainnet"
+        endpoints = endpoints_for(MAINNET)
+        algod_url = os.environ.get("ALGOD_URL", endpoints.algod_url)
+        algod_token = os.environ.get("ALGOD_TOKEN", endpoints.algod_token)
+        indexer_url = os.environ.get("INDEXER_URL", endpoints.indexer_url)
+        indexer_token = os.environ.get("INDEXER_TOKEN", endpoints.indexer_token)
+        usdc_id = usdc_asset_id(MAINNET) or 31566704
+
+        return NetworkConfig(
+            network_name=name,
+            network_id=MAINNET,
+            algod_url=algod_url,
+            algod_token=algod_token,
+            indexer_url=indexer_url,
+            indexer_token=indexer_token,
+            asset_id=usdc_id,
+            asset_name="USDC",
+            asset_decimals=6,
+            is_public=True,
+            fee_payer_funded=False,  # Operator must fund fee-payer account with ALGO
+        )
+
+    raise ValueError(
+        f"Unsupported NETWORK value '{raw_name}'. Expected 'localnet', 'testnet', or 'mainnet'."
+    )
+
+
+# Default singleton instance resolved from current environment
+current_config = load_network_config()
+
+
+def dry_run() -> None:
+    """Print resolved configuration for all three supported networks.
+
+    Performs read-only inspection. No transactions or network writes are executed.
+    """
+    targets: list[NetworkName] = ["localnet", "testnet", "mainnet"]
+    print("=" * 72)
+    print(" Algorand Payment Network Configuration Matrix (Dry Run)")
+    print("=" * 72)
+
+    for target in targets:
+        cfg = load_network_config(target)
+        print(f"\n[Network: {cfg.network_name.upper()}]")
+        print(f"  CAIP-2 Network ID : {cfg.network_id}")
+        print(f"  Algod Endpoint    : {cfg.algod_url}")
+        print(f"  Indexer Endpoint  : {cfg.indexer_url}")
+        print(f"  Payment Asset     : {cfg.asset_name} (Asset ID: {cfg.asset_id})")
+        print(f"  Asset Decimals    : {cfg.asset_decimals}")
+        print(f"  Public Network    : {cfg.is_public}")
+        print(f"  Fee Payer Model   : {'Auto-dispensed (dev)' if not cfg.is_public else 'ALGO funded wallet required'}")
+
+    print("\n" + "=" * 72)
+    print(" Dry run completed successfully. 0 transactions submitted.")
+    print("=" * 72)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] in ("--dry-run", "dry-run", "all"):
+        dry_run()
+    else:
+        # Default behavior: run dry-run to prove all three network configs
+        dry_run()
+```
+
+<sub>Source: [examples/shared/config.py](https://github.com/x402-avm/examples/blob/main/shared/config.py)</sub>
+
+{/* /example */}
+
+`python shared/config.py --dry-run` prints the configuration of all three networks without sending a transaction (it reads LocalNet's genesis hash from its algod):
+
+```text
+[Network: LOCALNET]
+  CAIP-2 Network ID : algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY
+  Algod Endpoint    : http://localhost:4001
+  Indexer Endpoint  : http://localhost:8980
+  Payment Asset     : ALGO (Asset ID: 0)
+  ...
+[Network: MAINNET]
+  CAIP-2 Network ID : algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k
+  Algod Endpoint    : https://mainnet-api.algonode.cloud
+  Indexer Endpoint  : https://mainnet-idx.algonode.cloud
+  Payment Asset     : USDC (Asset ID: 31566704)
+  ...
+ Dry run completed successfully. 0 transactions submitted.
+```
+
+Then set the environment for production. `VENDOR_ADDRESS` and `FEE_PAYER_MNEMONIC` are read by your own server code, as in [Server configuration](#server-configuration):
+
+```bash
+export NETWORK=mainnet
+export ALGOD_URL=https://mainnet-api.algonode.cloud
+export INDEXER_URL=https://mainnet-idx.algonode.cloud
+export VENDOR_ADDRESS="YOUR_RECEIVING_ADDRESS"
+export FEE_PAYER_MNEMONIC="..."   # injected by your secret manager, not typed into a shell history
+```
+
+## Simulate on MainNet
+
+[`mainnet/simulate.py`](https://github.com/x402-avm/examples/blob/main/mainnet/simulate.py) and [`mainnet/simulate.mjs`](https://github.com/x402-avm/examples/blob/main/mainnet/simulate.mjs) are the [TestNet simulations](/production/networks#check-payments-without-funds) with MainNet settings: they find funded accounts through the public MainNet indexer, build ALGO and USDC (`31566704`) groups with and without a fee payer, and check them with algod's simulate endpoint. Nothing is signed with a funded key and nothing is sent.
+
+```bash
+python mainnet/simulate.py
+node mainnet/simulate.mjs
+```
+
+## Monitor
+
+| Signal | How |
+|---|---|
+| Fee payer balance | `algod_client.account_info(fee_payer)["amount"]` on a schedule |
+| Settlement failures | `SettlementError("payment settlement failed: ...")` returned to callers; `WARNING` records on the `ai_economy_sdk` logger |
+| Settlement latency | Time from tool completion to confirmation |
+| Replay rejections | `402` with `{"error": "Replay detected"}`: a misbehaving client or an attack |
+| Revenue | Payments to `pay_to` on the indexer, or `ChainReader.past_usage` per buyer |
+
+The `ai_economy_sdk` logger records refused calls, settlement failures, expired reservations and failed chain lookups at `WARNING`; `x402_algorand` logs fee payer signing, simulation and settlement failures. Attach a handler, for example `logging.basicConfig(level=logging.WARNING)`, and alert on them.

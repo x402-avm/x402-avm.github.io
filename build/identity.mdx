@@ -1,0 +1,204 @@
+---
+title: "Identity"
+description: "Prove which Algorand address is calling, from Python or any wallet, and verify the proof on your server."
+---
+
+Use this page when your server needs to know who is calling, for passes, subscriptions, bulk discounts or per-caller prices, or when your client needs to tell it. The caller signs a proof with its key; nothing is submitted and nothing is paid. [Why the proof is a transaction](/how-it-works#identity-proofs).
+
+## Create and verify a proof
+
+<CodeGroup>
+```python Python
+from ai_economy_sdk import genesis_hash_for, sign_identity_txn, verify_identity_txn
+
+gh = genesis_hash_for("mainnet")
+
+# Client: one header, {"X-Identity-Txn": "..."}
+headers = sign_identity_txn(client_private_key, gh)
+
+# Server: the address, or None
+address = verify_identity_txn(headers["X-Identity-Txn"], gh)
+```
+
+```ts JavaScript (client)
+import algosdk from 'algosdk';
+import { buildIdentityTxn, encodeIdentityHeader, MAINNET } from 'x402-avm-js';
+
+const txn = buildIdentityTxn(myAddress, MAINNET.genesisHash);
+
+// With a browser wallet
+const [signed] = await wallet.signTransactions([algosdk.encodeUnsignedTransaction(txn)], [0]);
+// Or with a local key: const signed = txn.signTxn(account.sk);
+
+const headers = { 'X-Identity-Txn': encodeIdentityHeader(signed!) };
+```
+</CodeGroup>
+
+`x402-avm-js` creates proofs but does not verify them; verify on the server with `ai-economy-sdk`. On LocalNet, read the genesis hash from algod instead of using a preset. In algosdk v3 it is a `Uint8Array`, so encode it: `algosdk.bytesToBase64((await algod.getTransactionParams().do()).genesisHash!)`.
+
+`PaymentGate` verifies identity on every tool call with `verify_identity`: it checks `X-Identity-Txn` first, against the gate's network, and falls back to the legacy headers. In your own server:
+
+```python
+from ai_economy_sdk import verify_identity_txn
+
+address = verify_identity_txn(request.headers.get("X-Identity-Txn"), GENESIS_HASH_B64, max_skew=120)
+if address is None:
+    raise HTTPException(status_code=401, detail="invalid identity proof")
+```
+
+## The two formats
+
+| Format | Headers | Create with | Used by |
+|---|---|---|---|
+| Identity transaction (recommended) | `X-Identity-Txn` | `sign_identity_txn` (Python), `buildIdentityTxn` + `encodeIdentityHeader` (JavaScript) | Browser wallets and any client that can sign Algorand transactions |
+| Legacy signature | `x-sender-address`, `x-sender-timestamp`, `x-sender-signature` | `sign_identity` (Python, deprecated since 0.5.0) | `paid_mcp_session` (on every request when `identity=True`) |
+
+`sign_identity(private_key)` signs the message `x402-identity:<address>:<timestamp>` with Ed25519 (algosdk's `sign_bytes`) and returns the three headers. It emits a `DeprecationWarning`: use `sign_identity_txn()`, which binds the proof to one network. Servers keep accepting the legacy headers, and `paid_mcp_session` still sends them.
+
+## The identity transaction
+
+`make_identity_txn` (Python) and `buildIdentityTxn(address, genesisHashB64, ts?)` (JavaScript) build:
+
+| Field | Value | Why |
+|---|---|---|
+| type | `pay` | An ordinary payment the wallet can display and sign |
+| sender, receiver | the caller | A self-payment moves nothing |
+| amount | 0 | |
+| fee | 0 (flat) | Below the network minimum, so it cannot be confirmed |
+| first valid, last valid | 1, 1000 | A window every live network has passed |
+| genesis hash | the network's | Binds the proof to one network |
+| note | `x402-identity:<address>:<unix timestamp>` | Binds the proof to the caller and a time |
+
+The caller signs it, msgpack-encodes the signed transaction, base64-encodes the bytes and sends them as `X-Identity-Txn`.
+
+`verify_identity_txn(header_value, expected_genesis_hash_b64, max_skew=120)` returns the address, or `None` if any check fails:
+
+1. The header decodes to a signed transaction with a plain Ed25519 signature: no multisig, no logic signature, no rekeyed (authorized) signer.
+2. Type `pay`, sender equals receiver, amount 0, fee 0, no close-to, no rekey-to.
+3. The genesis hash equals the expected one.
+4. The validity window is at most 1,000 rounds.
+5. The note is `x402-identity:<sender>:<integer timestamp>` and the timestamp is within `max_skew` seconds of the server's clock.
+6. The signature verifies against the sender's public key.
+
+For the legacy headers, `verify_identity` checks the address, the 120-second skew and the signature.
+
+## Examples
+
+Python: sign a proof for the current LocalNet, verify it, and show that a different genesis hash is rejected.
+
+{/* example: localnet/identity.py */}
+
+```python localnet/identity.py expandable
+"""Identity proof verification via zero-fee self-signed Algorand transactions.
+
+Demonstrates sign_identity_txn and verify_identity_txn:
+1. Generates an account and constructs an X-Identity-Txn header bound to the network genesis hash.
+2. Verifies the header on the receiver side, asserting the recovered address matches the signer.
+3. Proves that verifying with a mismatched genesis hash rejects the signature (returns None).
+
+How to run:
+    python localnet/identity.py
+
+What it prints:
+    Address: <44-character Algorand address>
+    Verified address matches: True
+    Wrong genesis hash rejected: True
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from algosdk import account
+from ai_economy_sdk import sign_identity_txn, verify_identity_txn
+from _localnet import ALGOD
+
+WRONG_GENESIS_HASH = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+
+def main() -> None:
+    sk, addr = account.generate_account()
+    print(f"Address: {addr}")
+
+    # Read current LocalNet genesis hash
+    sp = ALGOD.suggested_params()
+    current_gh = sp.gh
+
+    # 1. Sign identity proof for the current network
+    headers = sign_identity_txn(sk, current_gh)
+
+    # 2. Verify with matching genesis hash
+    verified_address = verify_identity_txn(headers["X-Identity-Txn"], current_gh)
+    matches = verified_address == addr
+    print(f"Verified address matches: {matches}")
+
+    # 3. Attempt verification with mismatched genesis hash
+    rejected = verify_identity_txn(headers["X-Identity-Txn"], WRONG_GENESIS_HASH)
+    print(f"Wrong genesis hash rejected: {rejected is None}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<sub>Source: [examples/localnet/identity.py](https://github.com/x402-avm/examples/blob/main/localnet/identity.py)</sub>
+
+{/* /example */}
+
+```text
+Address: TWSYBERPSVZVWDBE4PCHVFCIPUKWCLGKD6LI56AEX5K7PVDPNCMSAMTTZE
+Verified address matches: True
+Wrong genesis hash rejected: True
+```
+
+JavaScript: build and sign a proof, then verify it with the Python SDK in a subprocess.
+
+{/* example: localnet/identity.mjs */}
+
+```javascript localnet/identity.mjs
+/**
+ * Build an X-Identity-Txn proof in JavaScript and verify it with the Python SDK.
+ *
+ *   node localnet/identity.mjs        # set PYTHON to a interpreter that has ai-economy-sdk
+ *
+ * The proof is an unsubmitted, zero-fee self-payment signed by the wallet and bound to one
+ * network's genesis hash.
+ */
+import { execFileSync } from 'node:child_process';
+import algosdk from 'algosdk';
+import { MAINNET, buildIdentityTxn, encodeIdentityHeader } from 'x402-avm-js';
+
+const PYTHON = process.env.PYTHON || 'python3';
+const VERIFY = `
+import sys
+from ai_economy_sdk import verify_identity_txn
+print(verify_identity_txn(sys.argv[1], sys.argv[2]))
+`;
+
+const account = algosdk.generateAccount();
+const address = account.addr.toString();
+const txn = buildIdentityTxn(address, MAINNET.genesisHash);
+const header = encodeIdentityHeader(txn.signTxn(account.sk));
+console.log(`Account:  ${address}`);
+console.log(`Header:   ${header.slice(0, 40)}... (${header.length} chars)`);
+
+const verified = execFileSync(PYTHON, ['-c', VERIFY, header, MAINNET.genesisHash], { encoding: 'utf-8' }).trim();
+console.log(`Verified: ${verified}`);
+if (verified !== address) throw new Error(`Address mismatch: expected ${address}, got ${verified}`);
+console.log('Identity proof verified.');
+```
+
+<sub>Source: [examples/localnet/identity.mjs](https://github.com/x402-avm/examples/blob/main/localnet/identity.mjs)</sub>
+
+{/* /example */}
+
+```bash
+node localnet/identity.mjs
+```
+
+It prints the account address, the start of the encoded header, and the address returned by `verify_identity_txn`.
+
+## Next
+
+- [Pricing and passes](/build/pricing): what servers do with the address.
+- [Identity reference](/reference/python/ai-economy-sdk/verify-identity-txn)

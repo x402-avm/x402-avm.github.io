@@ -1,0 +1,134 @@
+---
+title: "AI agents"
+description: "Give an AI agent a wallet and a budget: it calls paid MCP tools on its own, checks prices, and refuses anything over its limits."
+---
+
+By the end of this page your agent can call paid tools without anyone provisioning accounts or API keys, and it cannot spend more than you allow. All it needs is a funded Algorand address and a `paid_mcp_session`.
+
+## Give the agent a paid session
+
+```python
+import asyncio
+import os
+
+from ai_economy_sdk import paid_mcp_session
+
+SERVER = "https://tools.example.com/mcp"   # a paid MCP server (Streamable HTTP)
+
+async def run_agent() -> None:
+    async with paid_mcp_session(
+        SERVER,
+        os.environ["AGENT_PRIVATE_KEY"],   # base64 Algorand private key of a budget wallet
+        "mainnet",
+        spend_controls={"max_amount_per_payment": "$0.10"},  # tighter than the $1 default
+    ) as session:
+        tools = await session.list_tools()
+        # Hand `tools.tools` to your model as callable tools; for each tool call it makes:
+        result = await session.call_tool("summarize", {"text": "..."})
+        if result.isError:
+            # The tool failed: the payment was not settled. Decide whether to retry.
+            ...
+        print(result.content[0].text)
+
+asyncio.run(run_agent())
+```
+
+The session is an `mcp.ClientSession`, so it plugs into any agent framework that accepts one; payments are invisible to the framework. Tool discovery works as usual. If a price is outside the spend controls, nothing is signed and the session raises `SpendLimitExceededError`. Every parameter: [Pay from Python](/build/pay-from-python#call-paid-mcp-tools).
+
+Develop with `"testnet"` and free [TestNet ALGO](/production/networks#testnet), then switch to `"mainnet"`. The session uses AlgoNode's public algod unless you pass `algod_url`.
+
+## What the agent pays for
+
+| Event | Charged? |
+|---|---|
+| Opening the session, listing tools | No |
+| A call priced 0, or covered by a pass | No |
+| A paid call that succeeds | Yes, exactly the quoted price |
+| A paid call whose tool raises or returns `isError` | No ([settle-on-success](/how-it-works#settle-on-success)) |
+| A paid call whose settlement fails (`SettlementError: payment settlement failed`) | No |
+| The network fee | No: the server's fee payer pays it |
+| Resending the same signed payment | Rejected with `402` (`Replay detected` while the first use is in progress, `transaction_simulation_failed` once it has settled), never charged twice |
+
+With `identity=True` (the default) the session proves the agent's address on every request, so a server can honour a [pass](/build/pricing#passes) the agent bought, a subscription, a bulk discount or a per-caller price. The proof moves no funds and reveals nothing else. With `identity=False` the agent stays anonymous and pays the standard price.
+
+## Set limits
+
+An agent that can pay needs limits it cannot talk itself out of. No single control bounds total spend, so combine them:
+
+<Steps>
+  <Step title="Use a dedicated budget wallet">
+    Give the agent its own account and fund it with only what it may spend in a period. The balance is the hard limit on total spend. Top it up on a schedule rather than holding a large balance.
+  </Step>
+  <Step title="Keep spend controls on, and tight">
+    Set the cap to the most you would pay for any single call, for example `spend_controls={"max_amount_per_payment": "$0.05"}`. A `$` cap is 1,000,000 base units per dollar for ALGO too, so `$1` means 1 ALGO whatever its market price. Never pass `spend_controls=False` to an autonomous agent. [All options](/build/pay-from-python#spend-controls).
+  </Step>
+  <Step title="Pin the network">
+    Pass the network explicitly. The session registers the payment scheme for that network only, and refuses an offer for a network other than its algod's.
+  </Step>
+  <Step title="Allow only the assets you hold">
+    The default allow-list is ALGO and USDC (MainNet and TestNet). Add another ASA only with its own cap, in base units.
+  </Step>
+  <Step title="Protect the key">
+    Inject it from a secret store at start-up. Keep it out of prompts, tool arguments, logs and the agent's memory. If the agent's context could leak it, treat it as compromised and rotate it.
+  </Step>
+  <Step title="Watch the wallet">
+    Payments are public on chain. Alert on the budget wallet's balance and on unexpected recipients.
+  </Step>
+</Steps>
+
+Spend controls do not cap the **total** (an agent in a loop can make many payments under the cap), they do not judge **value** (a vendor can price any call up to your cap, so prefer vendors you trust), and they do not apply to **passes** the agent buys directly, which are ordinary payments outside x402.
+
+Whatever the client does, the server side also protects the agent: failed calls are free, a payment is used once, the amount and recipient must equal the quote, and groups that close or rekey accounts are rejected. See [Security](/production/security).
+
+## Check a price before paying
+
+x402 has no price list. The price of a call is in the `402` response to that call, and with `PaymentGate` it can depend on the arguments and the caller. MCP's `tools/list` returns no prices; a vendor may mention them in tool descriptions, but the `402` is authoritative.
+
+With `paid_mcp_session` the agent never sees the price, only the result, and the spend cap is its upper bound. That is the right setup for most agents. When an agent must decide per call (to compare vendors, or to ask a person), read the challenge without paying. For a `PaymentGate` server on Streamable HTTP (stateless, the default), one plain HTTP request is enough, without the MCP `initialize` handshake:
+
+```python
+import base64, json
+import httpx
+
+call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "echo", "arguments": {"text": "hi"}}}
+r = httpx.post("http://127.0.0.1:9201/mcp", json=call,
+               headers={"Accept": "application/json, text/event-stream"})
+if r.status_code == 402:
+    offer = json.loads(base64.b64decode(r.headers["payment-required"]))["accepts"][0]
+    print(offer["amount"], offer["asset"], offer["payTo"])
+```
+
+Nothing is paid or signed. The MCP SDK's client does not expose this HTTP response, which is why the request is made by hand. On the legacy SSE transport the same request goes to the session's `/messages/?session_id=...` endpoint, so you would have to speak SSE at the HTTP level; unless you need per-call approval, rely on spend controls.
+
+For an HTTP API, send the request with a client that does not pay:
+
+<CodeGroup>
+```python Python
+import httpx
+from x402.http import decode_payment_required_header
+
+response = httpx.get(url)
+if response.status_code == 402:
+    required = decode_payment_required_header(response.headers["payment-required"])
+    for offer in required.accepts:
+        print(offer.network, offer.asset, offer.amount, offer.pay_to)
+```
+
+```ts JavaScript
+import { decodePaymentRequired, selectRequirement } from 'x402-avm-js';
+
+const res = await fetch(url);
+if (res.status === 402) {
+  const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
+  const offer = selectRequirement(required, 'mainnet'); // throws if nothing is offered on MainNet
+  console.log(offer.amount, offer.asset, offer.payTo);
+}
+```
+</CodeGroup>
+
+An offer such as `"asset": "31566704", "amount": "50000"` on MainNet means 0.05 USDC (6 decimals). `accepts` can hold several offers, for example one per network; a client pays one. Every field: [HTTP 402 reference](/reference/protocol/http-402). To filter offers automatically with the official Python client, use a [payment policy](/build/pay-from-python#registration-options-and-policies).
+
+## Agents in JavaScript
+
+`x402-avm-js` has no MCP session wrapper. A Node agent that calls x402 HTTP APIs uses `decodePaymentRequired` and `payForRequirement` with [spend controls](/build/pay-from-browser#spend-controls); see [Pay from Node.js](/build/pay-from-node).

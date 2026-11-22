@@ -1,0 +1,276 @@
+---
+title: "Sell MCP tools"
+description: "Put a price on the tools of a FastMCP server, serve it, and confirm a paid call lands on chain."
+---
+
+By the end of this page you will have a FastMCP server whose `summarize` tool charges by input length, and a client that pays for a call and finds the payment on the indexer. Any MCP client with an Algorand wallet can then call your tools, with no accounts or API keys.
+
+```bash
+pip install ai-economy-sdk==0.5.1
+```
+
+You need an Algorand account for the server: it receives payments and pays the network fee of each call. The code below runs on [LocalNet](/production/networks#localnet), where the examples fund accounts for you.
+
+## Write the server
+
+{/* example: localnet/paid_mcp_tool/server.py */}
+
+```python localnet/paid_mcp_tool/server.py expandable
+"""Paid MCP tool server tutorial.
+
+Starts a FastMCP server offering a paid summarize tool, protected by PaymentGate
+on port 9231 with dynamic length-based pricing (1,000 microALGO per 100 characters,
+minimum 3,000 microALGO).
+
+How to run:
+    python localnet/paid_mcp_tool/server.py
+
+Expected output:
+    Server starting on http://127.0.0.1:9231/mcp
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import uvicorn
+from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+from fastmcp import FastMCP
+
+from _localnet import ALGOD, new_funded_account
+
+
+def price_summarize(tool: str, args: dict, sender: str | None = None) -> int:
+    """Calculate price based on text length: 1,000 microALGO per 100 chars, min 3,000."""
+    if tool == "summarize":
+        text = args.get("text", "")
+        units = (len(text) + 99) // 100
+        return max(3000, units * 1000)
+    return 3000
+
+
+def create_app():
+    # Fund server account on LocalNet
+    server_sk, server_addr = new_funded_account(algos=5)
+    signer = DefaultAvmSigner(server_sk, algod_client=ALGOD)
+
+    mcp = FastMCP("Summarizer")
+
+    @mcp.tool()
+    def summarize(text: str) -> str:
+        """Summarize text by extracting the primary sentences."""
+        sentences = [s.strip() for s in text.split(".") if s.strip()]
+        if len(sentences) <= 2:
+            return text.strip()
+        return sentences[0] + ". " + sentences[1] + "."
+
+    gate = PaymentGate(
+        signer=signer,
+        network="localnet",
+        pay_to=server_addr,
+        asset_id=0,
+        prices=price_summarize,
+    )
+    return gate.wrap(mcp, transport="streamable-http")
+
+
+if __name__ == "__main__":
+    app = create_app()
+    print("Server starting on http://127.0.0.1:9231/mcp ...", flush=True)
+    uvicorn.run(app, host="127.0.0.1", port=9231, log_level="warning")
+```
+
+<sub>Source: [examples/localnet/paid_mcp_tool/server.py](https://github.com/x402-avm/examples/blob/main/localnet/paid_mcp_tool/server.py)</sub>
+
+{/* /example */}
+
+`summarize` costs 1,000 microALGO per started block of 100 characters, with a minimum of 3,000 microALGO. The pricing function runs before the `402` is sent, so the caller is quoted the exact price for its input. The minimum stays above the 2,000 microALGO fee the server pays per call; see [the fee floor](/build/pricing#the-fee-floor).
+
+## Pay for a call
+
+{/* example: localnet/paid_mcp_tool/client.py */}
+
+```python localnet/paid_mcp_tool/client.py expandable
+"""Paid MCP tool client tutorial.
+
+Connects to the paid summarize tool on port 9231 via paid_mcp_session, pays the
+x402 payment on Algorand LocalNet, and confirms the transaction via Indexer.
+
+How to run:
+    python localnet/paid_mcp_tool/client.py
+
+Expected output:
+    Calling summarize tool...
+    Result: Algorand is a pure proof-of-stake blockchain. It achieves immediate finality without forks.
+    Price paid: 3000 microALGO
+    Confirmed TxID: <txid> (confirmed at round <round>)
+"""
+import asyncio
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ai_economy_sdk import AIEconomyError, paid_mcp_session
+from algosdk.v2client import indexer
+
+from _localnet import ALGOD, ALGOD_TOKEN, ALGOD_URL, INDEXER_URL, new_funded_account
+
+INDEXER = indexer.IndexerClient("", INDEXER_URL)
+
+
+async def main():
+    print("Generating funded buyer account on LocalNet...")
+    buyer_sk, buyer_addr = new_funded_account(algos=5)
+
+    test_text = (
+        "Algorand is a pure proof-of-stake blockchain. "
+        "It achieves immediate finality without forks. "
+        "Smart contracts run directly on the AVM with predictable micro-cent fees."
+    )
+
+    start_round = ALGOD.status()["last-round"]
+
+    print("Opening paid MCP session to http://127.0.0.1:9231/mcp ...")
+    async with paid_mcp_session(
+        "http://127.0.0.1:9231/mcp", buyer_sk, "localnet", algod_url=ALGOD_URL, algod_token=ALGOD_TOKEN
+    ) as session:
+        print("Calling summarize tool...")
+        res = await session.call_tool("summarize", {"text": test_text})
+
+        print(f"Result: {res.content[0].text}")
+
+    # Look up payment transaction on Indexer by buyer address
+    # Give indexer up to 5 seconds to ingest
+    found_txn = None
+    for _ in range(10):
+        time.sleep(0.5)
+        resp = INDEXER.search_transactions(address=buyer_addr, txn_type="pay", min_round=start_round)
+        txns = resp.get("transactions", [])
+        if txns:
+            found_txn = txns[0]
+            break
+
+    if not found_txn:
+        raise RuntimeError(f"Payment transaction for {buyer_addr} not found in indexer")
+
+    txid = found_txn["id"]
+    price = found_txn["payment-transaction"]["amount"]
+    confirmed_round = found_txn.get("confirmed-round")
+
+    print(f"Price paid: {price} microALGO")
+    print(f"Confirmed TxID: {txid} (confirmed at round {confirmed_round})")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+<sub>Source: [examples/localnet/paid_mcp_tool/client.py](https://github.com/x402-avm/examples/blob/main/localnet/paid_mcp_tool/client.py)</sub>
+
+{/* /example */}
+
+```bash
+python localnet/paid_mcp_tool/server.py
+```
+
+In a second terminal:
+
+```bash
+python localnet/paid_mcp_tool/client.py
+```
+
+```text
+Generating funded buyer account on LocalNet...
+Opening paid MCP session to http://127.0.0.1:9231/mcp ...
+Calling summarize tool...
+Result: Algorand is a pure proof-of-stake blockchain. It achieves immediate finality without forks.
+Price paid: 3000 microALGO
+Confirmed TxID: 6IFBD2KO35L4ZYXEHIW4TXYDQXCGWZL663TEWIIYYD3YUEKOGEDQ (confirmed at round 1767)
+```
+
+The 153-character input is two blocks (2,000 microALGO), below the minimum, so the call cost 3,000. The transaction id and round differ on every run. The client side is covered in [Pay from Python](/build/pay-from-python).
+
+## Configure PaymentGate
+
+`PaymentGate` intercepts each `tools/call`. When the call has a price above 0 and no valid payment, it answers `402`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `signer` | required | Signer for the fee payer account, usually `DefaultAvmSigner(private_key, algod_client=...)`. Its algod client is also used to resolve `"localnet"`. |
+| `network` | required | `"mainnet"`, `"testnet"`, `"localnet"` or a CAIP-2 id. |
+| `pay_to` | required | Address that receives payments. |
+| `asset_id` | `0` | `0` for ALGO, or an ASA id such as [USDC](/production/mainnet#accept-usdc). |
+| `prices` | `None` | `dict` of tool name to price, or a callable `(tool, args, sender) -> int`. |
+| `default_price` | `0` | Price for tools not in `prices`. 0 means free. |
+| `chain` | `None` | `ChainReader` for indexer lookups (passes, subscriptions, bulk discounts). |
+| `pass_scopes`, `pass_days` | `None`, `30.0` | [Passes](/build/pricing#passes). |
+| `subscription_asset_id`, `subscription_max_age_days`, `subscription_issuer` | `None`, `30.0`, `None` | [Subscription tokens](/build/pricing#subscription-tokens). |
+| `bulk_threshold`, `bulk_discount`, `bulk_days` | `None`, `0.5`, `30` | [Bulk discounts](/build/pricing#bulk-discounts). |
+| `min_fee_per_txn` | `1000` | Network minimum fee; the fee floor is twice this. |
+| `allow_loss` | `False` | Allow ALGO prices at or below the fee floor. |
+| `replay_db` | `None` | SQLite path for a [replay store shared by several workers](/production/security#replay-store). |
+| `replay_cache_size` | `5000` | Documented as the in-memory replay cache size; the replay store does not read it. |
+
+Every parameter, with types: [`PaymentGate` reference](/reference/python/ai-economy-sdk/payment-gate).
+
+## Choose a transport
+
+`gate.wrap(mcp, transport=...)` returns an ASGI app. Serve it with any ASGI server, for example `uvicorn.run(app, host="127.0.0.1", port=9201)`.
+
+| `transport=` | Endpoints | Use it for |
+|---|---|---|
+| `"streamable-http"` (alias `"http"`) | `POST /mcp` | Recommended. Stateless by default; pass `stateless_http=False` for MCP sessions. |
+| `"sse"` | `GET /sse`, `POST /messages/` | MCP clients that only speak the legacy HTTP+SSE transport. |
+
+Always pass `transport=`. Without it, `wrap()` still serves SSE, as 0.4 did, and emits a `FutureWarning`: the default will change to `"streamable-http"` in a future release. `path=` changes the endpoint path, and other keyword arguments go to `FastMCP.http_app()`.
+
+<Warning>
+  ai-economy-sdk 0.4.x served priced tools without payment on Streamable HTTP and on SSE apps mounted under a path prefix. Use 0.5.0 or later. See [Security](/production/security#unpaid-tool-calls).
+</Warning>
+
+### What wrap() adds
+
+1. **The gate's ASGI middleware.** It inspects the JSON-RPC body of every HTTP `POST`, whatever its path or transport. Other requests and non-tool messages (`initialize`, `tools/list`) pass through. For a `tools/call` it reads the caller's identity, computes the price, and passes the call through (price 0), answers `402`, or verifies the attached payment and reserves it. JSON-RPC batches containing a `tools/call` are rejected with HTTP `400`.
+2. **`SettleOnSuccessMiddleware`**, a FastMCP middleware. After the tool returns, it [settles or releases](/how-it-works#settle-on-success) the payment. It refuses, with `PaymentRequiredError`, any priced call that did not pass through the gate, so a transport the gate does not wrap cannot serve paid tools for free.
+
+### Mount the app yourself
+
+To mount the MCP app inside a larger Starlette or FastAPI app, install both layers. Without `SettleOnSuccessMiddleware` the gate refuses priced calls with HTTP `500`.
+
+```python
+from ai_economy_sdk import SettleOnSuccessMiddleware
+
+mcp.add_middleware(SettleOnSuccessMiddleware(gate))
+app = mcp.http_app(transport="http", middleware=gate.middleware())
+```
+
+## Register tools with a decorator
+
+`AIEconomySDK` bundles a FastMCP server and a `PaymentGate`; each tool is registered with its own pricing function.
+
+```python
+from ai_economy_sdk import AIEconomySDK, DefaultAvmSigner
+
+sdk = AIEconomySDK(
+    server_signer=DefaultAvmSigner(server_private_key, algod_client=algod_client),
+    network="localnet",
+    asset_id=0,
+    pay_to_address=server_address,
+    name="DecoratedServer",
+)
+
+@sdk.add_tool(name="analyze", description="Analyze input data", pricing_func=lambda args, sender: 10_000)
+def analyze(data: str) -> str:
+    return f"analyzed: {data}"
+
+app = sdk.build_app(transport="streamable-http")
+```
+
+`pricing_func` receives the tool arguments and the caller's verified address (or `None`). A function that accepts only `args` also works; one that accepts neither raises `ConfigurationError` when the tool is registered. `build_app(transport=...)` forwards to `PaymentGate.wrap()`. See the [`AIEconomySDK` reference](/reference/python/ai-economy-sdk/ai-economy-sdk).
+
+## Next
+
+- [Pricing and passes](/build/pricing): per-tool, dynamic and bulk prices, prepaid access.
+- [Go to MainNet](/production/mainnet): USDC, keys, fee funding and several workers.

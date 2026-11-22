@@ -20,6 +20,10 @@ To check the static site exactly as it is deployed:
 npx -y mint@4.3.63 export                       # writes export.zip
 rm -rf site && mkdir site && unzip -q export.zip -d site
 python3 scripts/build_agent_files.py --site site
+python3 scripts/add_search.py --site site
+python3 scripts/add_redirects.py --site site     # stubs for moved pages
+python3 scripts/check_site_links.py --site site  # every internal link and anchor
+npx -y pagefind@1.6.0 --site site
 cd site && node serve.js                         # http://localhost:3000
 ```
 
@@ -29,19 +33,22 @@ cd site && node serve.js                         # http://localhost:3000
 
 | Path | Contents |
 |---|---|
-| `docs.json` | Site configuration: theme, colours, navbar, footer, navigation |
-| `index.mdx`, `quickstart.mdx`, `how-it-works.mdx`, `installation.mdx`, `networks.mdx`, `glossary.mdx` | Get started |
-| `guides/networks/` | LocalNet, TestNet and MainNet guides |
-| `ai-economy-sdk/`, `x402-algorand/`, `x402-avm-js/` | Guides per package |
-| `tutorials/` | End-to-end tutorials |
-| `agents/` | For AI agents: paying for tools, guardrails, docs for AI tools, AGENTS.md files |
+| `docs.json` | Site configuration: theme, colours, navbar, footer, navigation, redirects |
+| `index.mdx`, `quickstart.mdx`, `how-it-works.mdx` | Start here. `how-it-works.mdx` is the one place the payment flow, the atomic group, settle-on-success, replay protection, identity and passes are explained |
+| `build/` | Task guides: sell MCP tools, pricing and passes, paywall an HTTP API, pay from Python / the browser / Node.js, AI agents, identity, facilitator |
+| `production/` | Networks (LocalNet, TestNet, private), going to MainNet (USDC, fee payer, checklist), security |
+| `reference/index.mdx`, `reference/packages.mdx`, `reference/protocol/`, `reference/errors.mdx` | Packages and versions, AVM exact scheme, HTTP 402 headers, error codes |
 | `reference/python/` | Python API reference, **generated** |
 | `reference/js/` | JavaScript API reference, **generated** |
 | `reference/x402/` | Summary of the official x402 SDK classes (hand-written) |
-| `resources/` | Security, troubleshooting, error codes, FAQ, changelog |
+| `resources/` | Troubleshooting, FAQ, glossary, changelog, docs for AI tools |
 | `logo/`, `favicon.svg` | Wordmark (light and dark) and icon |
 | `scripts/` | Generators and the post-export step (not published) |
 | `.github/workflows/` | `deploy.yml` (push to `main`) and `ci.yml` (pull requests) |
+
+## Moving or deleting a page
+
+Every old URL must keep working. Add the old path to `scripts/redirects.json` with its new target (`to`) and, for headings that moved elsewhere, an `anchors` map; headings with the same id on the target page are matched automatically. Then copy the entries into `redirects` in `docs.json` (destination without the `#anchor`). `add_redirects.py` writes `<old path>/index.html` and `<old path>.md` into the exported site and fails if a target page or heading does not exist.
 
 ## Regenerate the API reference
 
@@ -80,7 +87,7 @@ Marker paths are relative to the root of the examples repository (`localnet/...`
 
 ## Deployment
 
-`deploy.yml` runs on every push to `main` and on manual dispatch: it checks links, runs `mint export`, unpacks the archive into `site/`, adds `.nojekyll`, runs `scripts/build_agent_files.py` (Markdown version of every page, `llms.txt`, `llms-full.txt`, `sitemap.xml`), and deploys `site/` with `actions/deploy-pages`. In the repository settings, set **Pages > Source** to **GitHub Actions**.
+`deploy.yml` runs on every push to `main` and on manual dispatch: it checks links, runs `mint export`, unpacks the archive into `site/`, adds `.nojekyll`, runs `scripts/build_agent_files.py` (Markdown version of every page, `llms.txt`, `llms-full.txt`, `sitemap.xml`), `scripts/add_search.py`, `scripts/add_redirects.py` (a redirect stub for every moved page, from `scripts/redirects.json`), `scripts/check_site_links.py` and Pagefind, and deploys `site/` with `actions/deploy-pages`. In the repository settings, set **Pages > Source** to **GitHub Actions**.
 
 `ci.yml` runs the link check, the export and the post-export step on pull requests.
 

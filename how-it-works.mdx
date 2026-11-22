@@ -1,19 +1,21 @@
 ---
 title: "How it works"
-description: "The x402 flow on Algorand: the 402 challenge, the two-transaction atomic group, settle-on-success, identity proofs, passes and replay protection."
+description: "What happens between a 402 and a result: the payment flow, the two-transaction group, settle-on-success, replay protection, identity proofs and passes."
 ---
+
+Read this page once and the rest of the docs will make sense: every Build page assumes the flow below and links back here instead of repeating it.
 
 ## The x402 flow
 
-[x402](https://www.x402.org) uses HTTP status `402 Payment Required` to sell a resource per request. For an MCP server wrapped with `PaymentGate`, a tool call goes through these steps:
+[x402](https://www.x402.org) sells a resource per request with HTTP status `402 Payment Required`. For an MCP server wrapped with `PaymentGate`, a tool call goes like this:
 
-1. The client sends a tool call as a JSON-RPC `tools/call` request: `POST /mcp` with the recommended Streamable HTTP transport, or `POST /messages/?session_id=...` after opening `GET /sse` with the legacy SSE transport. Connecting, initializing and listing tools are free.
-2. `PaymentGate` inspects every HTTP `POST`, intercepts the `tools/call` request, computes the price for that tool, arguments and caller, and answers `402` with a `PAYMENT-REQUIRED` header: the accepted scheme, network, asset, amount, recipient (`payTo`) and fee payer.
-3. The client builds and signs a payment that matches the requirement.
-4. The client retries the call with a `PAYMENT-SIGNATURE` header holding the signed transactions.
-5. The server verifies the payment, reserves it against replay, runs the tool, settles the payment on chain if the tool succeeded, and returns the result. A `PAYMENT-RESPONSE` header carries the settlement result.
+1. The client sends a JSON-RPC `tools/call`: `POST /mcp` on the Streamable HTTP transport, or `POST /messages/?session_id=...` after `GET /sse` on the legacy SSE transport. Connecting, initializing and listing tools are free.
+2. The gate prices the call (tool, arguments, caller) and answers `402` with a `PAYMENT-REQUIRED` header: scheme, network, asset, amount, recipient (`payTo`) and fee payer.
+3. The client builds and signs a payment that matches.
+4. The client retries with the signed transactions in a `PAYMENT-SIGNATURE` header.
+5. The server verifies the payment, reserves it against replay, runs the tool, settles on chain if the tool succeeded, and returns the result with a `PAYMENT-RESPONSE` header.
 
-A tool whose price is 0 (free, or covered by a [pass](#passes)) is passed through without a challenge.
+A call priced at 0 (free, or covered by a [pass](#passes)) goes straight through. HTTP APIs protected with `x402-algorand` follow the same steps for an ordinary request. Every header, decoded field by field: [HTTP 402 reference](/reference/protocol/http-402).
 
 ```mermaid
 sequenceDiagram
@@ -46,68 +48,75 @@ sequenceDiagram
     end
 ```
 
-In `ai-economy-sdk` the facilitator runs in the same process as the resource server: `PaymentGate` creates an `x402Facilitator` and registers the Algorand scheme with your signer. With `x402-algorand` you can also run the facilitator separately. See [Facilitator](/x402-algorand/facilitator).
+The facilitator is the part that verifies and settles. `PaymentGate` runs one in the same process (an `x402Facilitator` with the Algorand scheme and your signer). With `x402-algorand` you can also [run it separately](/build/facilitator).
 
 ## The two-transaction atomic group
 
-When the server sponsors fees (it advertises `extra.feePayer` in the requirement, which `PaymentGate` always does), the payment is an [atomic group](/glossary#atomic-group) of two transactions following the official Algorand exact scheme specification ([scheme_exact_algo.md](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_algo.md)):
+When the server sponsors fees (it advertises `extra.feePayer`, which `PaymentGate` always does), the payment is an [atomic group](/resources/glossary#atomic-group) of two transactions, as the official [Algorand exact scheme](https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_algo.md) specifies:
 
 | Index | Type | Sender | Receiver | Amount | Fee | Signed by |
 |---|---|---|---|---|---|---|
-| 0 | `pay` | Fee payer | Fee payer | 0 | 2,000 microALGO | Server (fee payer) |
+| 0 | `pay` | Fee payer | Fee payer | 0 | 2,000 microALGO | Server (fee payer), at settlement |
 | 1 | `pay` (ALGO) or `axfer` (ASA) | Buyer | `payTo` | The price | 0 | Buyer |
 
-Algorand pools fees within a group. The minimum fee is 1,000 microALGO per transaction, so a two-transaction group needs 2,000 microALGO in total. Transaction 0 pays all of it, and transaction 1 has a fee of 0. The buyer's balance drops by exactly the price, even when the price is in USDC.
+Algorand pools fees within a group. The minimum is 1,000 microALGO per transaction, so transaction 0 pays 2,000 for both and transaction 1 pays nothing. The buyer's balance drops by exactly the price, even in USDC, because network fees are always paid in ALGO and the fee payer pays them.
 
-The client signs only transaction 1. The server signs transaction 0 at settlement. Because the group is atomic, the server cannot submit its own transaction without the buyer's payment, and the payment cannot go through without the server's fee transaction.
+The buyer signs only transaction 1. Because the group is atomic, the server cannot submit its fee transaction without the buyer's payment, and the payment cannot go through without the fee transaction.
 
-Without a fee payer, the payment is a single transaction signed by the buyer, who pays the normal 1,000 microALGO fee.
+Without a fee payer, the payment is one transaction signed by the buyer, who pays the normal 1,000 microALGO fee.
 
-<Note>
-  Prices in ALGO must cover the 2,000 microALGO the server pays per settled call. `PaymentGate` refuses a fixed ALGO price in `(0, 2000]` unless you pass `allow_loss=True`. See [Pricing](/ai-economy-sdk/pricing#the-fee-floor).
-</Note>
+ALGO prices must cover the 2,000 microALGO the server pays per call; `PaymentGate` enforces a [fee floor](/build/pricing#the-fee-floor).
 
 ## Settle-on-success
 
-Many payment flows charge first and refund on failure. `PaymentGate` does it the other way round:
+Most payment flows charge first and refund on failure. `PaymentGate` does it the other way round:
 
-1. **Verify.** The facilitator checks the group against the requirement (scheme, network, recipient, asset, exact amount, group id, signature, fee payer rules) and simulates the group on algod with `allow_empty_signatures=True`. Simulation checks balances and validity without broadcasting.
-2. **Run the tool.** The signed group is held while the tool runs.
-3. **On failure, discard.** If the tool raises or returns an MCP error result (`isError`), the server releases the replay reservation and never submits the group. The buyer is not charged.
-4. **On success, settle.** The server signs the fee payer transaction, submits the group and waits for confirmation. If submission fails (for example the transactions expired), the client receives `SettlementError("payment settlement failed: <reason>")` (a FastMCP `ToolError`) instead of the result.
-5. **Respond.** After settlement the replay entry is committed and the tool result is returned.
+1. **Verify.** The facilitator checks the group against the requirement (scheme, network, recipient, asset, exact amount, group id, signature, fee payer rules) and simulates it on algod with `allow_empty_signatures=True`. Nothing is broadcast.
+2. **Reserve and run.** The payment is reserved against replay and the signed group is held while the tool runs.
+3. **On failure, discard.** If the tool raises or returns an MCP error result (`isError`), the reservation is released and the group is never submitted. The buyer is not charged.
+4. **On success, settle.** The server signs the fee payer transaction, submits the group and waits for confirmation. If that fails (the transactions expired, the fee payer is out of ALGO), the client gets `SettlementError("payment settlement failed: <reason>")`, a FastMCP `ToolError`, instead of the result, and is not charged.
+5. **Respond.** The replay entry is committed and the result returned.
 
-The example [localnet/failed_call_not_charged.py](/ai-economy-sdk/settlement) shows a failing tool and a balance drop of 0.
+A reservation that is never settled or released is released after 300 seconds.
+
+The example [localnet/failed_call_not_charged.py](https://github.com/x402-avm/examples/blob/main/localnet/failed_call_not_charged.py) calls a tool that always raises:
+
+```text
+Tool call returned (isError=True): Error calling tool 'fail_tool': Deliberate tool failure: computation error
+Balance drop: 0 microALGO
+```
+
+## Replay protection
+
+A signed payment buys one call. `PaymentGate` hashes each payment payload with SHA-256 and tracks the hash in a replay store:
+
+| Operation | When | Effect |
+|---|---|---|
+| `reserve(hash)` | After verification, before the tool runs | Fails if the hash is already reserved or settled; the request gets `402` with `{"error": "Replay detected"}` and the tool does not run. |
+| `commit(hash)` | After settlement succeeds | Marks the hash settled. |
+| `release(hash)` | After a tool or settlement failure | Deletes the reservation, so the buyer can pay again. |
+
+The default store lives in one process's memory. With several workers, [share it in SQLite](/production/security#replay-store).
 
 ## Identity proofs
 
-A caller can prove which Algorand address it controls without paying. Servers use the address for [passes](#passes), subscriptions, bulk discounts and per-caller prices. Two formats are accepted by `verify_identity`:
+A caller can prove which Algorand address it controls without paying. Servers use the address for passes, subscriptions, bulk discounts and per-caller prices. Two formats exist:
 
-- **`X-Identity-Txn` (recommended).** A signed Algorand payment transaction that can never execute: sender and receiver are the caller, amount 0, fee 0, and the note is `x402-identity:<address>:<unix timestamp>`. It is bound to one network by its genesis hash. Browser wallets can sign it because it is an ordinary transaction. Build it with `sign_identity_txn` (Python) or `buildIdentityTxn` (JavaScript).
-- **Legacy `x-sender-*` headers.** `x-sender-address`, `x-sender-timestamp` and `x-sender-signature`, an Ed25519 signature over `x402-identity:<address>:<timestamp>`. `paid_mcp_session` sends these on every request when `identity=True` (the default).
+- **`X-Identity-Txn` (recommended).** A signed payment transaction that can never execute: a 0-amount self-payment with fee 0, an expired validity window and the note `x402-identity:<address>:<unix timestamp>`. It is bound to one network by its genesis hash, and browser wallets can sign it because it is an ordinary transaction.
+- **Legacy `x-sender-*` headers.** An Ed25519 signature over `x402-identity:<address>:<timestamp>`. `paid_mcp_session` sends these on every request by default.
 
-The verifier rejects proofs whose timestamp is more than 120 seconds from the server's clock. The transaction form also cannot be replayed on chain: its fee is below the network minimum and `make_identity_txn` sets its validity to rounds 1 to 1000, which every live network has passed. Details: [Identity](/ai-economy-sdk/identity).
+Proofs more than 120 seconds from the server's clock are rejected. Building and verifying them: [Identity](/build/identity).
 
 ## Passes
 
-A pass gives a buyer free calls for a period (30 days by default) after a single on-chain purchase. A pass is an ordinary payment from the buyer to the vendor's `pay_to` address with the note:
+A pass gives a buyer free calls for a period (30 days by default) after one on-chain purchase. It is an ordinary payment from the buyer to the vendor's `pay_to` address with the note:
 
 ```text
 x402-pass:<scope>
 ```
 
-for example `x402-pass:listing:echo-1` or `x402-pass:vendor:acme-corp`. A gate configured with `pass_scopes={scope: price}` looks up the caller's recent payments on the indexer. If it finds an unexpired pass payment for one of its scopes of at least that scope's price, the call's price becomes 0 and no challenge is sent. Positive lookups are cached for 20 seconds. The caller is identified by its identity proof. Details: [Passes](/ai-economy-sdk/passes).
-
-## Replay protection
-
-A signed `PAYMENT-SIGNATURE` must pay for one call only. `PaymentGate` hashes the payment payload with SHA-256 and keeps the hash in a replay store:
-
-- `reserve` before the tool runs. If the hash is already reserved or settled, the request is rejected with `402` and `{"error": "Replay detected"}`, and the tool does not run.
-- `commit` after settlement succeeds.
-- `release` when the tool fails or settlement fails, so the buyer can retry with a fresh payment.
-
-The default store is in memory, which protects a single process. With several worker processes, pass `replay_db="/path/replay.db"` so all workers share one SQLite database (WAL mode). See [Settlement](/ai-economy-sdk/settlement#replay-protection).
+for example `x402-pass:listing:echo-1` or `x402-pass:vendor:acme-corp`. A gate configured with `pass_scopes={scope: price}` looks up the caller's recent payments on the indexer. If it finds an unexpired pass for one of its scopes, of at least that scope's price, the call costs 0 and no challenge is sent. Positive lookups are cached for 20 seconds. The caller is identified by its identity proof. Setting it up: [Pricing and passes](/build/pricing#passes).
 
 ## Network binding
 
-Every Algorand transaction carries the genesis hash of its network. The client refuses to build a payment when its algod is on a different network from the requirement, and the facilitator rejects a group whose genesis hash does not match the requirement's network (`invalid_exact_avm_payload_genesis_hash_mismatch`). A payment signed on TestNet cannot be used on MainNet. Network ids are described on [Networks](/networks).
+Every Algorand transaction carries its network's genesis hash, so a payment signed on TestNet cannot be used on MainNet: the client refuses to build it and the facilitator rejects it. Network ids and how they are derived: [Networks](/production/networks).

@@ -29,7 +29,7 @@ Each header is base64-encoded JSON of the corresponding [schema](/reference/x402
 | `x402AsyncTransport(client, transport=None)` | `x402.http.clients.httpx` | The transport itself; can wrap another transport such as `httpx.ASGITransport`. |
 | `wrapRequestsWithPayment(session, client, **adapter_kwargs)` | `x402.http.clients` | Mounts a payment adapter on a `requests.Session`; takes an `x402ClientSync`. |
 
-Example: [HTTPX and requests](/x402-algorand/httpx-requests).
+Example: [HTTPX and requests](/build/pay-from-python#pay-http-apis).
 
 ## Server middleware
 
@@ -39,7 +39,7 @@ Example: [HTTPX and requests](/x402-algorand/httpx-requests).
 | `payment_middleware` (Flask) | `x402.http.middleware.flask` | `(app, routes, server, paywall_config=None, paywall_provider=None, sync_facilitator_on_start=True)`; `server` is an `x402ResourceServerSync`. Needs `x402[flask]`. |
 | `x402HTTPResourceServer` | `x402.http` | Framework-independent route matching and payment processing; `PaymentGate` uses it. |
 
-Examples: [FastAPI](/x402-algorand/fastapi), [Flask](/x402-algorand/flask).
+Examples: [FastAPI](/build/paywall-http-api#fastapi), [Flask](/build/paywall-http-api#flask).
 
 ### Route configuration
 

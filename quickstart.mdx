@@ -1,11 +1,9 @@
 ---
 title: "Quickstart"
-description: "Run a paid MCP tool on Algorand LocalNet and pay for it from Python and from JavaScript."
+description: "In about five minutes, run a paid MCP tool on a local Algorand network and pay for it from Python and from JavaScript."
 ---
 
-In this quickstart you start a local Algorand network, run an MCP server whose `echo` tool costs 5,000 microALGO per call, and pay for calls from a Python client. A last step pays an x402 HTTP endpoint from JavaScript with `x402-avm-js`.
-
-Everything runs on LocalNet, so no real funds are involved. The scripts come from the [examples repository](https://github.com/x402-avm/examples) and fund their own accounts from the LocalNet dispenser.
+In five minutes you will have an MCP server whose `echo` tool costs 5,000 microALGO per call, a Python client that pays for it, and a JavaScript client that pays an HTTP endpoint. Everything runs on LocalNet, a private Algorand network on your machine, so no real money is involved.
 
 ## Prerequisites
 
@@ -19,9 +17,9 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     algokit localnet start
     ```
 
-    This starts algod on `http://localhost:4001`, the indexer on `http://localhost:8980` and KMD on `http://localhost:4002`. The examples fund new accounts from KMD's `unencrypted-default-wallet`.
+    algod listens on `http://localhost:4001` and the indexer on `http://localhost:8980`. The examples fund new accounts from LocalNet's built-in dispenser, so you need no keys.
   </Step>
-  <Step title="Get the examples and install the SDK">
+  <Step title="Get the examples">
     ```bash
     git clone https://github.com/x402-avm/examples.git
     cd examples
@@ -30,11 +28,9 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     npm install
     ```
 
-    `requirements.txt` pins `ai-economy-sdk==0.5.1` and `x402-algorand==0.3.0` (which bring the official `x402` package, FastMCP and `py-algorand-sdk`), plus FastAPI, Flask and uvicorn for the HTTP examples. `npm install` installs `x402-avm-js` and `algosdk` for the JavaScript examples.
+    This installs `ai-economy-sdk` 0.5.1, `x402-algorand` 0.3.0 and `x402-avm-js` 0.4.1 with their dependencies.
   </Step>
   <Step title="Run the paid MCP server">
-    The server funds a fresh account with 10 ALGO, wraps a FastMCP server with `PaymentGate`, prices `echo` at 5,000 microALGO, and serves the MCP Streamable HTTP transport (`POST /mcp`).
-
     {/* example: localnet/quickstart_server.py */}
 
     ```python localnet/quickstart_server.py expandable
@@ -99,20 +95,14 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     python localnet/quickstart_server.py
     ```
 
-    It prints the address that receives payments and serves `http://127.0.0.1:9201/mcp`:
-
     ```text
     pay_to: GL4IOGTXMILQYI2UOSYORNW4LHB4SULTDRYCA4AMFQUGKTEYN3ZUDQG6XE
     ```
 
-    The address is different on every run.
-
-    <Note>
-      `gate.wrap(mcp, transport="streamable-http")` is the recommended transport. Pass `transport="sse"` only for MCP clients that still speak the legacy HTTP+SSE transport (`GET /sse` and `POST /messages/`). Calling `wrap(mcp)` without `transport=` still serves SSE, as 0.4 did, and emits a `FutureWarning`: the default will change to Streamable HTTP in a later release. See [Transports](/ai-economy-sdk/server#transports).
-    </Note>
+    That address receives the payments; it is new on every run. The server answers MCP calls at `http://127.0.0.1:9201/mcp`.
   </Step>
-  <Step title="Call the tool from Python">
-    In a second terminal, run the client. It funds a buyer with 5 ALGO, opens a paid session, calls `echo`, and measures the buyer's balance before and after.
+  <Step title="Pay for a call from Python">
+    In a second terminal:
 
     {/* example: localnet/quickstart_client.py */}
 
@@ -176,10 +166,10 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     Balance drop: 5000 microALGO
     ```
 
-    The buyer paid exactly the price. The server's fee payer paid the 2,000 microALGO of network fees.
+    The buyer paid exactly the price. The server paid the 2,000 microALGO network fee.
   </Step>
   <Step title="Pay from JavaScript">
-    `x402-avm-js` pays any x402 endpoint that uses the Algorand exact scheme. This example pays a small FastAPI paywall (5,000 microALGO on `GET /paid`, port 9221) built with `x402-algorand`. Start the server, then run the client:
+    `x402-avm-js` pays any x402 endpoint on Algorand. Start a small FastAPI paywall (`GET /paid` on port 9221, 5,000 microALGO), then run the client:
 
     ```bash
     python localnet/server_for_js.py
@@ -262,43 +252,33 @@ Everything runs on LocalNet, so no real funds are involved. The scripts come fro
     Over-cap request rejected: SpendLimitExceededError
     ```
 
-    The last line is the spend controls at work. `payForRequirement` checks every offer against them before anything is signed: by default it refuses any payment above 1,000,000 base units (1 ALGO or 1 USDC), and here the script tightens the cap to 10,000 and pins the asset, network and recipient. A server that asks for more gets a `SpendLimitExceededError`, and the wallet is never asked to sign. See [Guardrails](/agents/guardrails#javascript-clients).
-
-    <Note>
-      `x402-avm-js` builds and signs payments; it does not include an MCP client transport. To call paid MCP tools from code, use `paid_mcp_session` from Python, or decode the `402` returned by a tool call yourself as shown on [Discovering prices](/agents/discovering-prices).
-    </Note>
+    The last line is a spend limit at work: the script caps payments at 10,000 microALGO, so a 50,000 microALGO demand is refused before the wallet signs anything.
   </Step>
 </Steps>
 
-## Run every LocalNet example
-
-The examples repository has a script that runs all LocalNet examples in order, starting and stopping the servers they need:
+To run every LocalNet example in order, with the servers they need started and stopped for you:
 
 ```bash
 bash scripts/run_all_localnet.sh
 ```
 
-## What happened
+## What just happened
 
-1. The client called `echo` with `{"text": "hello world"}`.
-2. `PaymentGate` answered with HTTP `402` and a `PAYMENT-REQUIRED` header: scheme `exact`, the LocalNet CAIP-2 network id, asset `0` (ALGO), amount `5000`, the server's `payTo` address and its fee payer.
-3. The client built a two-transaction atomic group:
-   - Transaction 0: the server's fee payer pays itself 0 ALGO with a 2,000 microALGO fee that covers both transactions.
-   - Transaction 1: the buyer pays 5,000 microALGO to `payTo` with a fee of 0. The client signs only this one.
-4. The client retried the call with the signed group in the `PAYMENT-SIGNATURE` header.
-5. The server verified the group (including a simulation on algod), ran the tool, and because it succeeded, signed the fee payer transaction and submitted the group.
+Your client called `echo`, the server answered `402 Payment Required` with a price, the client signed a payment for exactly that price and retried, and the server ran the tool and then settled the payment on chain. [How it works](/how-it-works) walks through each step.
+
+## Next
 
 <Columns cols={2}>
-  <Card title="How it works" icon="workflow" href="/how-it-works">
-    The full protocol, with a sequence diagram.
+  <Card title="Sell your own MCP tools" icon="store" href="/build/sell-mcp-tools">
+    Price tools by input, serve them, and test with a paying client.
   </Card>
-  <Card title="Build a paid MCP tool" icon="graduation-cap" href="/tutorials/paid-mcp-tool">
-    A longer tutorial with dynamic pricing and indexer checks.
+  <Card title="Paywall an HTTP API" icon="lock" href="/build/paywall-http-api">
+    Charge per request on FastAPI or Flask.
   </Card>
-  <Card title="Move to TestNet" icon="flask-conical" href="/guides/networks/testnet">
+  <Card title="Let your agent pay" icon="bot" href="/build/ai-agents">
+    A budget wallet, spend limits and price checks.
+  </Card>
+  <Card title="Move to TestNet" icon="flask-conical" href="/production/networks#testnet">
     Real transactions with free TestNet ALGO.
-  </Card>
-  <Card title="Agents" icon="bot" href="/agents/paying-for-tools">
-    Let an AI agent pay for tools with spend limits.
   </Card>
 </Columns>

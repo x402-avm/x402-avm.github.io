@@ -1,0 +1,110 @@
+---
+title: "Security"
+description: "The attacks ai-economy-sdk, x402-algorand and x402-avm-js are built to resist, where each protection lives, and how to share the replay store across workers."
+---
+
+Read this page before you take real payments: it lists what the packages protect against, where each check is implemented, and the one thing you must configure yourself, the shared replay store. To report a vulnerability, follow the [security policy](https://github.com/x402-avm/.github/blob/main/SECURITY.md); do not open a public issue.
+
+## Unpaid tool calls
+
+**Threat.** A client reaches a priced tool without paying, over a transport or path the gate does not inspect.
+
+**Protection.** Since ai-economy-sdk 0.5.0 the gate inspects the JSON-RPC body of every HTTP `POST`, whatever its path or transport (Streamable HTTP at `/mcp`, SSE at `/messages/`, or an app mounted under a prefix). It fails closed: `SettleOnSuccessMiddleware` refuses with `PaymentRequiredError` any priced call that did not pass through the gate, or whose reservation has expired. JSON-RPC batches containing `tools/call` get HTTP `400`, and without `SettleOnSuccessMiddleware` the gate refuses priced calls with HTTP `500`.
+
+<Warning>
+  In ai-economy-sdk 0.4.x the gate only inspected `POST` requests whose path ended in `/messages`. A FastMCP Streamable HTTP app wrapped with `PaymentGate.middleware()` (`POST /mcp`), or a gated SSE app mounted under a path prefix, served priced tools without payment. Upgrade to 0.5.0 or later.
+</Warning>
+
+**Where.** `_GateASGIMiddleware` and `SettleOnSuccessMiddleware` in [`ai_economy_sdk/gate.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py).
+
+## Replayed payments
+
+**Threat.** A client or an eavesdropper sends the same signed payment several times to get several calls.
+
+**Protection.** Each payment's hash is reserved before the tool runs and rejected if already reserved or settled ([how](/how-it-works#replay-protection)). The chain itself also rejects a group that was already confirmed (a resent settled payment fails verification with `transaction_simulation_failed`), but the replay store stops a duplicate before the tool runs.
+
+**Where.** [`ai_economy_sdk/replay.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/replay.py), [`ai_economy_sdk/gate.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py).
+
+### Replay store
+
+- **In memory** (`replay_db=None`, the default): a dictionary guarded by a lock. Protects one process only.
+- **SQLite** (`replay_db="/path/replay.db"`): a database in WAL mode (`PRAGMA journal_mode=WAL;`). `reserve` is an `INSERT` on the primary key, so two processes can never accept the same payment. Use it whenever more than one process serves the same `pay_to`, for example `uvicorn --workers 4` or several containers sharing a disk.
+
+```python
+gate = PaymentGate(
+    signer=signer,
+    network="mainnet",
+    pay_to=server_address,
+    asset_id=0,
+    prices={"echo": 5000},
+    replay_db="/var/data/replay.db",  # shared by every worker
+)
+```
+
+## Payments from another network
+
+**Threat.** A client pays where funds cost nothing (LocalNet, TestNet) and presents the payment to a MainNet service.
+
+**Protection.** The facilitator derives the CAIP-2 id from each transaction's genesis hash and rejects the group if it differs from the requirement's network (`invalid_exact_avm_payload_genesis_hash_mismatch`). The Python client scheme refuses to build a payment when its algod is on another network, for example `NetworkMismatchError: algod is on algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY but the payment is for algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe`; `x402-avm-js` only pays an offer for its algod's network, and refuses one whose `extra.genesisHash` or `extra.genesisId` disagrees with algod.
+
+**Where.** [`x402_algorand/exact/facilitator.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/facilitator.py), [`x402_algorand/exact/client.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/client.py).
+
+## Draining or taking over accounts
+
+**Threat.** A group includes a close-out (`close_remainder_to`, `asset_close_to`) that empties an account, a rekey that hands control to an attacker, or a key registration.
+
+**Protection.** Before signing anything, the facilitator rejects any close-out field (`..._close_to_detected`), any key registration (`..._blocked_transaction_type`), and any rekey that is not a balanced pair returning authority to the sender within the group (`..._rekey_detected`).
+
+**Where.** `validate_no_security_risks` and `validate_rekey_operations` in [`x402_algorand/utils.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py).
+
+## Abusing the fee payer
+
+**Threat.** A crafted group makes the server's fee payer pay large fees, send funds, or act as the buyer.
+
+**Protection.** Every transaction sent by one of the facilitator's addresses must be a `pay` to itself with amount 0, no close-out, no rekey and a fee of at most 16,000 microALGO; the fee payer's transactions are signed only after these checks. The facilitator signs only for addresses it manages and rejects any payment sent from one of them (`..._fee_payer_transferring_funds`). On the business side, `PaymentGate` refuses ALGO prices that do not cover the 2,000 microALGO fee per call, unless `allow_loss=True`.
+
+**Where.** `validate_fee_payer_transaction` in [`x402_algorand/utils.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/utils.py); the fee floor in [`ai_economy_sdk/gate.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py).
+
+## Wrong amount, recipient or asset
+
+**Threat.** A client pays less than the price, pays someone else, or pays in another asset.
+
+**Protection.** The receiver must equal `payTo` (`..._recipient_mismatch`), the amount must equal the required amount exactly (`..._amount_insufficient`), and the asset must match (`..._asset_id_mismatch`). The buyer's authorization is verified (`..._invalid_signature`): an Ed25519 signature by the sender or its auth address (rekeyed account), a k-of-n multisig, or a logic signature, as the exact scheme allows. A signed transaction cannot be altered. Finally the group is simulated on algod, which catches insufficient balances and missing opt-ins.
+
+**Where.** [`x402_algorand/exact/facilitator.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/exact/facilitator.py).
+
+## Charging for failed work
+
+**Threat.** A service takes payment and then fails, leaving the buyer to ask for a refund.
+
+**Protection.** [Settle-on-success](/how-it-works#settle-on-success): a failed tool releases the reservation and the signed group is never submitted.
+
+**Where.** `SettleOnSuccessMiddleware` in [`ai_economy_sdk/gate.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/gate.py).
+
+## Overspending clients
+
+**Threat.** A malicious or mispriced server asks a client, often an unattended agent, for more than intended.
+
+**Protection.** Both clients check the offer before anything is signed. The official `x402` Python client allows only known assets (ALGO, and USDC on MainNet and TestNet) up to `$1` per payment by default; `paid_mcp_session` exposes this as [`spend_controls`](/build/pay-from-python#spend-controls). Since 0.4.0, `x402-avm-js` refuses any payment above 1,000,000 base units and can restrict assets, networks and recipients ([options](/build/pay-from-browser#spend-controls)).
+
+**Where.** `checkSpendControls` in [`x402-avm-js/src/index.ts`](https://github.com/x402-avm/x402-avm-js/blob/main/src/index.ts).
+
+## Key handling
+
+**Threat.** Private keys leak from a client or server.
+
+**Protection.** Clients send only signed transactions; keys never leave the signer. On the server, `DefaultAvmSigner` (ai-economy-sdk) and `ServerAvmSigner` (x402-algorand) hold the fee payer key in memory and sign only the indexes they are asked to, which the facilitator restricts to validated fee payer transactions. Keys are kept in private attributes and `repr()` shows only the address; `ServerAvmSigner` and `PayerAvmSigner` also keep them out of exception messages and logs. To use a KMS, HSM or wallet, implement the `ClientAvmSigner` / `FacilitatorAvmSigner` protocols. Load keys from the environment or a secret manager and keep the fee payer separate from the revenue account ([Keys](/production/mainnet#keys)).
+
+**Where.** [`ai_economy_sdk/signer.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/signer.py), [`x402_algorand/signer.py`](https://github.com/x402-avm/x402-algorand/blob/main/x402_algorand/signer.py).
+
+## Stolen or replayed identity proofs
+
+**Threat.** An attacker reuses a caller's identity proof to impersonate it, for example to use its pass.
+
+**Protection.** Proofs carry a timestamp and are accepted only within 120 seconds of the server's clock. An `X-Identity-Txn` proof is bound to one network, must be a plain Ed25519-signed 0-amount self-payment with fee 0, no close-out and no rekey, and cannot execute on chain. Proofs from multisig accounts, logic signatures or rekeyed accounts are refused ([rules](/build/identity#the-identity-transaction)).
+
+**Where.** `verify_identity_txn` and `verify_identity` in [`ai_economy_sdk/identity.py`](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/identity.py).
+
+<Note>
+  Anyone who captures an identity proof can replay it within its 120-second window. Serve paid tools over HTTPS so headers cannot be read in transit.
+</Note>

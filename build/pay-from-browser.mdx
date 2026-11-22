@@ -1,0 +1,359 @@
+---
+title: "Pay from the browser"
+description: "Unlock paid content in a web app: the visitor's Algorand wallet signs the payment with x402-avm-js, within spend limits you set."
+---
+
+By the end of this page you will have a web page whose premium report unlocks after the visitor pays 4,000 microALGO from their wallet, and you will know how to plug in any Algorand wallet. `x402-avm-js` decodes the `402`, builds the payment group, has the wallet sign its part, and encodes the `PAYMENT-SIGNATURE` header. It works with ALGO or any ASA, on every network.
+
+```bash
+npm install x402-avm-js@0.4.1 algosdk
+```
+
+## The whole flow in one call
+
+```ts
+import { algodClient, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+
+const algod = algodClient('mainnet'); // or 'testnet', or algodClient(network, url, token)
+const res = await fetch(url);
+if (res.status === 402) {
+  const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);
+  const header = await payForRequirement(
+    required,
+    myAddress,
+    algod,
+    (txns, indexes) => wallet.signTransactions(txns, indexes), // Pera, Defly, Lute, KMD, a local key...
+    { maxAmount: 50_000n, allowedNetworks: ['mainnet'] },      // spend controls, checked before signing
+  );
+  const paid = await fetch(url, { headers: { 'PAYMENT-SIGNATURE': header } });
+}
+```
+
+`payForRequirement`:
+
+1. Fetches suggested parameters from algod (`algod.getTransactionParams().do()`).
+2. Picks the `exact` offer for algod's network with `selectRequirement`. A server can offer several networks (say MainNet USDC and TestNet ALGO); if none matches the wallet's, it throws `NetworkMismatchError` instead of signing a useless payment.
+3. Checks the offer against the [spend controls](#spend-controls).
+4. Builds the group with `buildExactAvmGroup`: the [two-transaction group](/how-it-works#the-two-transaction-atomic-group) when the offer has `extra.feePayer`, otherwise one payment that pays the normal fee.
+5. Asks your signing function to sign only the buyer's transaction.
+6. Encodes the signed and unsigned transactions into the `PAYMENT-SIGNATURE` value.
+
+The browser submits nothing to the chain. The server verifies, runs the service and settles.
+
+## Build the paywall
+
+The files are in `localnet/browser_paywall/` of the [examples repository](https://github.com/x402-avm/examples); run `pip install -r requirements.txt` and `npm install` from its root. They run on [LocalNet](/production/networks#localnet).
+
+<Steps>
+  <Step title="The server">
+    A FastAPI app that serves the page at `/` and protects `GET /api/premium` with the official `x402` middleware, as on [Paywall an HTTP API](/build/paywall-http-api).
+
+    {/* example: localnet/browser_paywall/server.py */}
+
+    ```python localnet/browser_paywall/server.py expandable
+    """Browser paywall server: serves the static page and charges 4,000 microALGO for /api/premium.
+
+        python localnet/browser_paywall/server.py     # http://127.0.0.1:9232
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+    import uvicorn
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    from x402 import x402Facilitator, x402ResourceServer
+    from x402.http.middleware.fastapi import payment_middleware
+    from x402_algorand import ServerAvmSigner, caip2_from_genesis_hash
+    from x402_algorand.exact import register_exact_avm_facilitator, register_exact_avm_server
+
+    from _localnet import ALGOD, new_funded_account
+
+
+    def create_app() -> FastAPI:
+        network = caip2_from_genesis_hash(ALGOD.suggested_params().gh)
+        signer = ServerAvmSigner.from_private_key(new_funded_account()[0], ALGOD)
+
+        facilitator = x402Facilitator()
+        register_exact_avm_facilitator(facilitator, signer, network)
+        server = x402ResourceServer(facilitator)
+        register_exact_avm_server(server)
+
+        routes = {"GET /api/premium": {
+            "accepts": [{"scheme": "exact", "pay_to": signer.address,
+                         "price": {"amount": "4000", "asset": "0"}, "network": network}],
+            "description": "Deep sea exploration premium report",
+        }}
+
+        app = FastAPI(title="Browser Paywall")
+        app.middleware("http")(payment_middleware(routes, server))
+
+        @app.get("/api/premium")
+        def premium():
+            return {
+                "title": "Deep Sea Hydrothermal Vent Survey",
+                "findings": "Dense polymetallic sulfides discovered at depth 2,400m.",
+                "status": "unlocked",
+            }
+
+        app.mount("/", StaticFiles(directory=Path(__file__).parent, html=True), name="static")
+        return app
+
+
+    if __name__ == "__main__":
+        print("Browser paywall on http://127.0.0.1:9232", flush=True)
+        uvicorn.run(create_app(), host="127.0.0.1", port=9232, log_level="warning")
+    ```
+
+    <sub>Source: [examples/localnet/browser_paywall/server.py](https://github.com/x402-avm/examples/blob/main/localnet/browser_paywall/server.py)</sub>
+
+    {/* /example */}
+  </Step>
+  <Step title="The page's client code">
+    `app.js` requests the report, and on `402` pays with the visitor's signing function and retries. The page ([index.html](https://github.com/x402-avm/examples/blob/main/localnet/browser_paywall/index.html)) imports `fetchPremiumContent` from the bundle.
+
+    {/* example: localnet/browser_paywall/app.js */}
+
+    ```javascript localnet/browser_paywall/app.js
+    /**
+     * Browser paywall client (x402-avm-js): fetch /api/premium, pay the 402 challenge with the
+     * caller's wallet signer, retry with PAYMENT-SIGNATURE.
+     */
+    import algosdk from 'algosdk';
+    import { PaymentNotAllowedError, SpendLimitExceededError, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+
+    // Never pay more than 0.01 ALGO per request, whatever the server asks for.
+    const SPEND_CONTROLS = { maxAmount: 10_000n, allowedAssets: ['0'] };
+
+    export async function fetchPremiumContent(
+      payerAddress,
+      signTxns,
+      algodUrl = 'http://localhost:4001',
+      algodToken = 'a'.repeat(64),
+    ) {
+      const first = await fetch('/api/premium');
+      if (first.status === 200) return first.json();
+      if (first.status !== 402) throw new Error(`Unexpected server response: HTTP ${first.status}`);
+
+      const challenge = decodePaymentRequired(first.headers.get('payment-required'));
+      const algod = new algosdk.Algodv2(algodToken, algodUrl, '');
+
+      let signature;
+      try {
+        signature = await payForRequirement(challenge, payerAddress, algod, signTxns, SPEND_CONTROLS);
+      } catch (err) {
+        if (err instanceof SpendLimitExceededError || err instanceof PaymentNotAllowedError) {
+          throw new Error(`Payment refused by spend controls: ${err.message}`);
+        }
+        throw err;
+      }
+
+      const paid = await fetch('/api/premium', { headers: { 'payment-signature': signature } });
+      if (paid.status !== 200) throw new Error(`Payment refused by server: HTTP ${paid.status}`);
+      return paid.json();
+    }
+    ```
+
+    <sub>Source: [examples/localnet/browser_paywall/app.js](https://github.com/x402-avm/examples/blob/main/localnet/browser_paywall/app.js)</sub>
+
+    {/* /example */}
+
+    Bundle it with esbuild (the repository's npm script writes `localnet/browser_paywall/bundle.js`, an ES module containing `algosdk` and `x402-avm-js`):
+
+    ```bash
+    npm run build:paywall
+    ```
+  </Step>
+  <Step title="Check it from Node">
+    `verify.mjs` runs the same calls as `app.js`, with a LocalNet account instead of a browser wallet. It does not drive a browser.
+
+    {/* example: localnet/browser_paywall/verify.mjs */}
+
+    ```javascript localnet/browser_paywall/verify.mjs
+    /**
+     * Runs the same x402 client flow as app.js from Node against the paywall on port 9232
+     * (start browser_paywall/server.py first):
+     *
+     *   node localnet/browser_paywall/verify.mjs
+     */
+    import { decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+    import { algod, newFundedAccount, signerFor } from '../_localnet.mjs';
+
+    const URL = 'http://127.0.0.1:9232/api/premium';
+    const balance = async (addr) => (await algod.accountInformation(addr).do()).amount;
+
+    const buyer = await newFundedAccount(5);
+    const before = await balance(buyer.address);
+
+    const res402 = await fetch(URL);
+    if (res402.status !== 402) throw new Error(`Expected 402, got ${res402.status}`);
+    const challenge = decodePaymentRequired(res402.headers.get('payment-required'));
+    const [req] = challenge.accepts;
+    console.log(`402: ${req.amount} units of asset ${req.asset} to ${req.payTo} on ${req.network}`);
+
+    const signature = await payForRequirement(challenge, buyer.address, algod, signerFor(buyer.sk));
+    const paid = await fetch(URL, { headers: { 'payment-signature': signature } });
+    if (paid.status !== 200) throw new Error(`Expected 200, got ${paid.status}: ${await paid.text()}`);
+    console.log('Unlocked:', await paid.json());
+
+    const drop = before - (await balance(buyer.address));
+    console.log(`Balance drop: ${drop} microALGO`);
+    if (drop !== BigInt(req.amount)) throw new Error(`Expected a drop of ${req.amount}, got ${drop}`);
+    console.log('Browser paywall verified.');
+    ```
+
+    <sub>Source: [examples/localnet/browser_paywall/verify.mjs](https://github.com/x402-avm/examples/blob/main/localnet/browser_paywall/verify.mjs)</sub>
+
+    {/* /example */}
+
+    ```bash
+    python localnet/browser_paywall/server.py   # http://127.0.0.1:9232
+    node localnet/browser_paywall/verify.mjs    # in a second terminal
+    ```
+
+    ```text
+    402: 4000 units of asset 0 to P4MQF6EJEYT3W4MA2OS2M6JLPYV2JXNFGLT2ER6S3UNII7JDOM3SJRHPDU on algorand:tg0cyjEz14FZK9BTpL2q0TOyFbc0McwY
+    Unlocked: {
+      title: 'Deep Sea Hydrothermal Vent Survey',
+      findings: 'Dense polymetallic sulfides discovered at depth 2,400m.',
+      status: 'unlocked'
+    }
+    Balance drop: 4000 microALGO
+    Browser paywall verified.
+    ```
+  </Step>
+</Steps>
+
+## Connect a wallet
+
+`payForRequirement` hands signing to a callback:
+
+```ts
+signTxns: (txns: Uint8Array[], indexes: number[]) => Promise<(Uint8Array | null)[]>
+```
+
+`txns` are the encoded unsigned transactions of the group and `indexes` the ones the buyer must sign. Return an array as long as `txns`, with signed bytes at each index in `indexes` and `null` elsewhere; unsigned positions are sent as they are, for the server to sign.
+
+Wallets return signatures either as the full group (as long as `txns`, `null` where unsigned) or sparse (as long as `indexes`). This function, written for `@txnlab/use-wallet-react` (Pera, Defly, Lute, KMD and others), normalizes both:
+
+{/* example: localnet/browser_wallet.ts */}
+
+```typescript localnet/browser_wallet.ts expandable
+/**
+ * React browser wallet integration using use-wallet-react v5 and x402-avm-js.
+ *
+ * Demonstrates:
+ * 1. Connecting to active wallet account, algod client, and signTransactions hook.
+ * 2. Normalizing the signTransactions return contract across different wallet providers.
+ * 3. Calling payForRequirement() to fulfill an x402 payment challenge.
+ *
+ * How to type-check:
+ *   npx tsc --noEmit localnet/browser_wallet.ts
+ */
+
+import { useWallet } from '@txnlab/use-wallet-react';
+import { payForRequirement, type PaymentRequired, type SpendControls } from 'x402-avm-js';
+
+/**
+ * Execute an x402 payment challenge using the connected browser wallet.
+ *
+ * Different wallet providers implement the signTransactions contract in two ways:
+ * - Full-group mapping: Returns an array of length equal to txns.length, with null at un-signed indexes.
+ * - Sparse mapping: Returns an array of length equal to indexes.length, containing only requested signatures.
+ *
+ * The wrapper normalizes both behaviors to match payForRequirement's expectation:
+ * an array of length txns.length with Uint8Array at signed indexes and null elsewhere.
+ *
+ * @param challenge - Decoded PaymentRequired challenge from HTTP 402 response.
+ * @param wallet - useWallet() hook return value.
+ * @param controls - Spend controls; without them the default cap of 1,000,000 base units applies.
+ *   Throws SpendLimitExceededError / PaymentNotAllowedError (both X402AvmError) before the wallet is asked to sign.
+ * @returns Promise resolving to the base64-encoded PAYMENT-SIGNATURE header.
+ */
+export async function payWithBrowserWallet(
+  challenge: PaymentRequired,
+  wallet: ReturnType<typeof useWallet>,
+  controls: SpendControls = { maxAmount: 100_000n, allowedAssets: ['0'] },
+): Promise<string> {
+  const { activeAddress, algodClient, signTransactions } = wallet;
+
+  if (!activeAddress) {
+    throw new Error('No active wallet connected. Please connect your wallet first.');
+  }
+
+  // Normalize wallet signing response to full group length
+  const safeSignTxns = async (
+    txns: Uint8Array[],
+    indexes: number[]
+  ): Promise<(Uint8Array | null)[]> => {
+    const signed = await signTransactions(txns, indexes);
+    if (!signed) {
+      return new Array(txns.length).fill(null);
+    }
+
+    const mapped: (Uint8Array | null)[] = new Array(txns.length).fill(null);
+    if (signed.length === indexes.length) {
+      indexes.forEach((txnIdx, signIdx) => {
+        mapped[txnIdx] = signed[signIdx];
+      });
+    } else {
+      signed.forEach((signedBytes, idx) => {
+        if (signedBytes) {
+          mapped[idx] = signedBytes;
+        }
+      });
+    }
+    return mapped;
+  };
+
+  return await payForRequirement(challenge, activeAddress, algodClient, safeSignTxns, controls);
+}
+```
+
+<sub>Source: [examples/localnet/browser_wallet.ts](https://github.com/x402-avm/examples/blob/main/localnet/browser_wallet.ts)</sub>
+
+{/* /example */}
+
+```bash
+npm install x402-avm-js algosdk @txnlab/use-wallet-react
+```
+
+To let returning visitors prove who they are without paying, sign an [identity proof](/build/identity) with the same wallet.
+
+## Spend controls
+
+The server chooses the amount in a `402`, so a compromised or buggy server could ask for anything. `payForRequirement` and `buildExactAvmGroup` check every offer **before anything is built or signed**. By default, any payment above 1,000,000 base units (1 ALGO or 1 USDC; `DEFAULT_MAX_AMOUNT`) is refused, matching the Python client. Unlike the Python client, any asset is allowed unless you set `allowedAssets`.
+
+Pass the options as the last argument:
+
+```ts
+import { payForRequirement, SpendLimitExceededError, PaymentNotAllowedError } from 'x402-avm-js';
+
+try {
+  const header = await payForRequirement(required, address, algod, signTxns, {
+    maxAmount: 50_000n,                     // base units; bigint, safe integer or numeric string
+    allowedAssets: [0, 31566704],           // ALGO and MainNet USDC
+    allowedNetworks: ['mainnet'],           // names or CAIP-2 ids
+    allowedPayTo: [TRUSTED_VENDOR_ADDRESS], // recipients you trust
+  });
+} catch (e) {
+  if (e instanceof SpendLimitExceededError) console.warn(`asked for ${e.amount}, limit ${e.limit}`);
+  else if (e instanceof PaymentNotAllowedError) console.warn(`${e.field} ${e.value} not allowed`);
+  else throw e;
+}
+```
+
+| Option | Meaning |
+|---|---|
+| `maxAmount` | Per-payment cap in base units. One value applies to every asset; a record such as `{ '0': 2_000_000, '31566704': 5_000_000, '*': 100_000 }` sets it per asset id, with `'*'` as fallback. Assets not covered use the 1,000,000 default. `Infinity` removes the cap. |
+| `allowedAssets` | If set, only these asset ids (`0` is ALGO). |
+| `allowedNetworks` | If set, only these networks. LocalNet has no name here: use its CAIP-2 id from `networkFromAlgod(algod)`. |
+| `allowedPayTo` | If set, only these recipient addresses. |
+
+`checkSpendControls(requirement, controls)` runs the same check on its own, for example to show a price before asking the wallet to sign. A malformed option throws `InvalidOptionsError`. Every error class and its `code`: [Errors](/reference/errors#x402-avm-js-errors).
+
+## Next
+
+- [Pay from Node.js](/build/pay-from-node): scripts, services and agents.
+- [`payForRequirement` reference](/reference/js/pay-for-requirement)

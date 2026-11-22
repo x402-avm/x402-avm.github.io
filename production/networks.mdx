@@ -1,0 +1,629 @@
+---
+title: "Networks"
+description: "Develop on LocalNet, test on TestNet, run on your own nodes or a private network: CAIP-2 ids, endpoints, funding and network helpers."
+---
+
+Use this page to move a working service from your laptop to a public network. Build on LocalNet, check it against real transactions on TestNet, then follow [Go to MainNet](/production/mainnet). The SDKs work the same on all of them; mostly the network name and the endpoints change.
+
+## Networks at a glance
+
+| | MainNet | TestNet | LocalNet |
+|---|---|---|---|
+| Short name | `mainnet` | `testnet` | `localnet` |
+| CAIP-2 id | `algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k` | `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe` | Read from algod |
+| Genesis hash | `wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=` | `SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=` | Read from algod |
+| Genesis id | `mainnet-v1.0` | `testnet-v1.0` | `dockernet-v1` (AlgoKit) |
+| Default algod | `https://mainnet-api.algonode.cloud` | `https://testnet-api.algonode.cloud` | `http://localhost:4001` |
+| Default indexer | `https://mainnet-idx.algonode.cloud` | `https://testnet-idx.algonode.cloud` | `http://localhost:8980` |
+| USDC asset id | `31566704` | `10458941` | None |
+| Constants | Python `MAINNET`, JS `MAINNET` | Python `TESTNET`, JS `TESTNET` | JS `LOCALNET_ENDPOINTS` |
+
+MainNet and TestNet default to the public [AlgoNode](https://algonode.io) endpoints, which need no API key. USDC has 6 decimals: `1000000` base units is 1 USDC. In Python, `MAINNET` and `TESTNET` are the CAIP-2 id strings; in JavaScript they are presets that also carry `genesisHash`, `genesisId`, `algodUrl`, `indexerUrl` and `usdc`.
+
+## Network ids
+
+Wherever an API takes a network, you can pass a short name or a CAIP-2 id. Ids follow the [Algorand CAIP-2 profile](https://github.com/ChainAgnostic/namespaces/blob/main/algorand/caip2.md): `algorand:` plus the first 32 characters of the genesis hash in URL-safe base64 (`+` becomes `-`, `/` becomes `_`, no padding). The official `x402` SDK validates ids against `^[-a-z0-9]{3,8}:[-_a-zA-Z0-9]{1,32}$`, which is why the reference is 32 characters long.
+
+Older releases used the full 44-character genesis hash (`algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=`). These legacy ids are still accepted as input everywhere and converted to the short form; do not write them in new code.
+
+| Input | Resolves to |
+|---|---|
+| `"mainnet"`, `"algorand-mainnet"`, `"algorand"` | MainNet |
+| `"testnet"`, `"algorand-testnet"` | TestNet |
+| `"localnet"` (Python also accepts `"algorand-localnet"`, `"dockernet"`, `"sandnet"`) | The network of the LocalNet algod |
+| `"algorand:<32 characters>"` | That network |
+| `"algorand:<44-character genesis hash>"` | That network, converted to the short id |
+
+These names work in `ai-economy-sdk` and `x402-avm-js`. The lower-level `x402-algorand` functions, such as `normalize_network`, take CAIP-2 ids and the x402 v1 names (`algorand-mainnet`, `algorand-testnet`, `algorand`), not `"mainnet"` or `"localnet"`. In JavaScript, `resolveNetwork("localnet")` throws, because a LocalNet id must be read from a node.
+
+<CodeGroup>
+```python Python
+from algosdk.v2client import algod
+from ai_economy_sdk import resolve_network, genesis_hash_for, endpoints_for, usdc_asset_id
+
+resolve_network("mainnet")    # 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
+genesis_hash_for("mainnet")   # 'wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8='
+usdc_asset_id("testnet")      # 10458941
+endpoints_for("testnet").algod_url  # 'https://testnet-api.algonode.cloud'
+
+# LocalNet: ask its algod
+local = algod.AlgodClient("a" * 64, "http://localhost:4001")
+resolve_network("localnet", local)  # 'algorand:<32 characters>'
+```
+
+```ts JavaScript
+import { MAINNET, algodClient, networkFromAlgod, networkFromGenesisHash, resolveNetwork } from 'x402-avm-js';
+
+resolveNetwork('testnet');                    // 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'
+networkFromGenesisHash(MAINNET.genesisHash);  // 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
+MAINNET.usdc;                                 // 31566704
+
+// LocalNet: ask its algod
+const id = await networkFromAlgod(algodClient('localnet'));
+```
+</CodeGroup>
+
+| JavaScript function | Input | Output |
+|---|---|---|
+| `resolveNetwork(name)` | A name from the table above (not `"localnet"`), a short id or a legacy id | The short id; throws `UnknownNetworkError` otherwise |
+| `networkFromGenesisHash(hash)` | Base64 string or `Uint8Array` | The short id |
+| `networkFromAlgod(algod)` | An `Algodv2` client | The id of the node's network (async) |
+| `algodClient(network, url?, token?)` | `"mainnet"`, `"testnet"`, `"localnet"`, or any id with a `url` | An `Algodv2` client |
+
+[localnet/networks.py](https://github.com/x402-avm/examples/blob/main/localnet/networks.py) prints this table for all three networks; its LocalNet row differs on your machine.
+
+A payment is bound to its network by the genesis hash in every transaction, and both client and facilitator check it ([details](/production/security#payments-from-another-network)).
+
+## LocalNet
+
+LocalNet is a private Algorand network that runs in Docker on your machine, from [AlgoKit](https://github.com/algorandfoundation/algokit-cli). Transactions confirm in seconds, accounts are funded from a built-in dispenser, and nothing costs money. Every example that settles payments runs on it.
+
+```bash
+algokit localnet start    # start the containers
+algokit localnet status   # show service status
+algokit localnet reset    # wipe the chain and start again
+algokit localnet stop     # stop the containers
+```
+
+| Service | URL | Token |
+|---|---|---|
+| algod | `http://localhost:4001` | 64 × `a` |
+| indexer | `http://localhost:8980` | none |
+| KMD | `http://localhost:4002` | 64 × `a` |
+
+```bash
+curl -s -H "X-Algo-API-Token: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+  http://localhost:4001/v2/status | grep last-round
+```
+
+LocalNet's genesis hash is created with the network, so its id differs on every machine and changes after a reset. Never hard-code it. `PaymentGate`, `AIEconomySDK` and `paid_mcp_session` read it from the signer's (or session's) algod when given `network="localnet"`, and register the network. In JavaScript, `algodClient('localnet')` connects to the defaults in `LOCALNET_ENDPOINTS` (x402-avm-js before 0.4.1 connected to port 80; upgrade), and `payForRequirement` reads the network from the algod you pass.
+
+<Warning>
+  After `algokit localnet reset`, restart your servers and clients. A running server keeps the old network id and rejects payments signed for the new chain with `invalid_exact_avm_payload_genesis_hash_mismatch`. Old accounts and assets are gone; the examples create fresh ones each run.
+</Warning>
+
+### Fund test accounts
+
+LocalNet's KMD holds a funded wallet named `unencrypted-default-wallet`. The examples use this helper:
+
+{/* example: localnet/_localnet.py */}
+
+```python localnet/_localnet.py
+"""LocalNet helper for doc examples: funds test accounts using LocalNet's KMD dispenser."""
+from algosdk import account, kmd, transaction
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
+from algosdk.v2client import algod
+
+ALGOD_URL = "http://localhost:4001"
+ALGOD_TOKEN = "a" * 64
+KMD_URL = "http://localhost:4002"
+KMD_TOKEN = "a" * 64
+INDEXER_URL = "http://localhost:8980"
+
+ALGOD = algod.AlgodClient(ALGOD_TOKEN, ALGOD_URL)
+
+
+def dispenser() -> tuple[str, str]:
+    """Retrieve the primary funded account from LocalNet's default unencrypted KMD wallet."""
+    k = kmd.KMDClient(KMD_TOKEN, KMD_URL)
+    w = next(x for x in k.list_wallets() if x["name"] == "unencrypted-default-wallet")
+    h = k.init_wallet_handle(w["id"], "")
+    addr = max(k.list_keys(h), key=lambda a: ALGOD.account_info(a)["amount"])
+    return addr, k.export_key(h, "", addr)
+
+
+def new_funded_account(algos: int = 10) -> tuple[str, str]:
+    """Generate a new account and fund it with the specified amount of ALGO from the dispenser."""
+    sk, addr = account.generate_account()
+    d_addr, d_sk = dispenser()
+    sp = ALGOD.suggested_params()
+    txn = transaction.PaymentTxn(d_addr, sp, addr, algos * 1_000_000)
+    ALGOD.send_transaction(AccountTransactionSigner(d_sk).sign_transactions([txn], [0])[0])
+    transaction.wait_for_confirmation(ALGOD, txn.get_txid(), 10)
+    return sk, addr
+```
+
+<sub>Source: [examples/localnet/_localnet.py](https://github.com/x402-avm/examples/blob/main/localnet/_localnet.py)</sub>
+
+{/* /example */}
+
+`new_funded_account(algos=10)` returns `(private_key, address)` for a new account holding 10 ALGO. The JavaScript examples do the same with `algosdk.Kmd` in [localnet/_localnet.mjs](https://github.com/x402-avm/examples/blob/main/localnet/_localnet.mjs).
+
+### Assets on LocalNet
+
+LocalNet has no USDC. Price in ALGO (`asset_id=0`) while developing, or create your own ASA. A custom ASA is not one of the client's default assets, so allow it explicitly, and opt both `pay_to` and the buyer in to it:
+
+```python
+async with paid_mcp_session(
+    url, buyer_sk, "localnet",
+    spend_controls={"allowed_assets": [
+        {"network": local_network_id, "asset": str(my_asa_id), "max_amount_per_payment": "5000000"}
+    ]},
+) as session:
+    ...
+```
+
+### Examples that run on LocalNet
+
+From the root of the [examples repository](https://github.com/x402-avm/examples), after `pip install -r requirements.txt` and `npm install`, `bash scripts/run_all_localnet.sh` runs them all in order and starts and stops the servers they need.
+
+| Example | Shown on |
+|---|---|
+| `localnet/quickstart_server.py`, `quickstart_client.py`, `js_pay.mjs` with `server_for_js.py` | [Quickstart](/quickstart) |
+| `localnet/paid_mcp_tool/` | [Sell MCP tools](/build/sell-mcp-tools) |
+| `localnet/pricing.py`, `passes.py` | [Pricing and passes](/build/pricing) |
+| `localnet/failed_call_not_charged.py` | [How it works](/how-it-works#settle-on-success) |
+| `localnet/identity.py`, `identity.mjs` | [Identity](/build/identity) |
+| `localnet/fastapi_paywall.py`, `flask_paywall.py` | [Paywall an HTTP API](/build/paywall-http-api) |
+| `localnet/httpx_client.py` | [Pay from Python](/build/pay-from-python#pay-http-apis) |
+| `localnet/browser_paywall/`, `browser_wallet.ts` | [Pay from the browser](/build/pay-from-browser) |
+| `localnet/manual_flow.py` | [Run a facilitator](/build/facilitator) |
+
+## TestNet
+
+TestNet is a public network whose ALGO has no value. Payments are real transactions that anyone can see in an explorer, so it is where you check a deployment before MainNet.
+
+<Steps>
+  <Step title="Create two accounts">
+    A server account (it receives payments and pays the group fees) and a buyer:
+
+    ```python
+    from algosdk import account, mnemonic
+
+    for role in ("server", "buyer"):
+        sk, addr = account.generate_account()
+        print(role, addr)
+        print(role, "mnemonic:", mnemonic.from_private_key(sk))
+    ```
+
+    Keep the mnemonics in a secret store or environment variables. `mnemonic.to_private_key(...)` turns one back into the base64 key the SDKs take.
+  </Step>
+  <Step title="Fund them with free TestNet ALGO">
+    Use the dispenser at [lora.algokit.io/testnet/fund](https://lora.algokit.io/testnet/fund). A few ALGO each is plenty: the server pays 2,000 microALGO per settled call (1 ALGO covers 500 calls), and every account keeps a [minimum balance](/resources/glossary#mbr) of 0.1 ALGO.
+  </Step>
+  <Step title="Run the server">
+    Compared with the Quickstart server, only the network, the algod client and the key source change:
+
+    ```python server_testnet.py
+    import os
+
+    import uvicorn
+    from algosdk import account, mnemonic
+    from algosdk.v2client import algod
+    from fastmcp import FastMCP
+    from ai_economy_sdk import DefaultAvmSigner, PaymentGate
+
+    server_sk = mnemonic.to_private_key(os.environ["SERVER_MNEMONIC"])
+    server_addr = account.address_from_private_key(server_sk)
+    algod_client = algod.AlgodClient("", "https://testnet-api.algonode.cloud")
+
+    mcp = FastMCP("TestNetServer")
+
+    @mcp.tool()
+    def echo(text: str) -> str:
+        """Echo back input text."""
+        return f"echo: {text}"
+
+    gate = PaymentGate(
+        signer=DefaultAvmSigner(server_sk, algod_client=algod_client),
+        network="testnet",
+        pay_to=server_addr,
+        asset_id=0,
+        prices={"echo": 5000},
+    )
+    uvicorn.run(gate.wrap(mcp, transport="streamable-http"), host="127.0.0.1", port=9201)
+    ```
+  </Step>
+  <Step title="Pay from the client">
+    `paid_mcp_session` uses the public TestNet algod when `network="testnet"`:
+
+    ```python client_testnet.py
+    import asyncio
+    import os
+
+    from algosdk import mnemonic
+    from ai_economy_sdk import paid_mcp_session
+
+    async def main() -> None:
+        buyer_sk = mnemonic.to_private_key(os.environ["BUYER_MNEMONIC"])
+        async with paid_mcp_session("http://127.0.0.1:9201/mcp", buyer_sk, "testnet") as session:
+            result = await session.call_tool("echo", {"text": "hello testnet"})
+            print(result.content[0].text)
+
+    asyncio.run(main())
+    ```
+
+    Look up either address in the [Lora explorer](https://lora.algokit.io/testnet) to see the settled group.
+  </Step>
+</Steps>
+
+These two scripts are the Quickstart scripts with TestNet settings. For a tested TestNet payment, run [`testnet/live_payment.py`](https://github.com/x402-avm/examples/blob/main/testnet/live_payment.py). It makes one real 1,000 microALGO payment with the client and facilitator schemes, with the server account as fee payer, and prints the confirmed transaction id and an explorer link. Without both mnemonics set it prints instructions and exits with status 0.
+
+```bash
+export TESTNET_BUYER_MNEMONIC="..."    # buyer, funded at lora.algokit.io/testnet/fund
+export TESTNET_SERVER_MNEMONIC="..."   # receiver and fee payer, also funded
+python testnet/live_payment.py
+```
+
+To charge TestNet USDC (asset `10458941`), follow [Accept USDC](/production/mainnet#accept-usdc) with the TestNet asset id.
+
+### Check payments without funds
+
+You can validate payment groups against live TestNet state with no keys or funds: build the group with a signer that signs nothing, then ask algod to simulate it with empty signatures allowed. These scripts find funded accounts through the public indexer and simulate four cases: ALGO and USDC, each with and without a fee payer. The package test suites run the same kind of checks with `PUBLIC_NETS=1`.
+
+<Tabs>
+  <Tab title="Python">
+    {/* example: testnet/simulate.py */}
+
+    ```python testnet/simulate.py expandable
+    """Public network simulation for x402 Algorand payments on TestNet.
+
+    Performs read-only validation against real TestNet ledger without spending funds:
+    1. Queries the public AlgoNode indexer to identify real funded accounts holding USDC and ALGO.
+    2. Constructs payment groups for ALGO (asset 0) and USDC (asset 10458941), both with and without fee payers.
+    3. Evaluates the constructed atomic groups via Algod's simulate endpoint using empty signatures.
+    4. Confirms that all 4 test cases simulate successfully without on-chain execution.
+
+    How to run:
+        python testnet/simulate.py
+
+    What it prints:
+        Network progress and "ok" for each of the 4 test cases.
+    """
+
+    import httpx
+    from algosdk import encoding, transaction
+    from algosdk.v2client import algod
+    from algosdk.v2client.models import SimulateRequest, SimulateRequestTransactionGroup
+
+    from x402.schemas import PaymentRequirements
+    from x402_algorand.constants import ALGORAND_TESTNET_CAIP2
+    from x402_algorand.exact.client import ExactAvmScheme as ExactAvmClient
+
+    CONFIG = {
+        "name": "testnet",
+        "caip": ALGORAND_TESTNET_CAIP2,
+        "algod_url": "https://testnet-api.algonode.cloud",
+        "indexer_url": "https://testnet-idx.algonode.cloud",
+        "usdc_id": 10458941,
+    }
+
+
+    class _WatchOnly:
+        """Watch-only signer providing an address without private keys.
+
+        Generates unsigned transactions for simulate endpoint evaluation.
+        """
+
+        def __init__(self, address: str):
+            self.address = address
+
+        def sign_transactions(self, txns: list[bytes], indexes: list[int]) -> list[None]:
+            return [None] * len(txns)
+
+
+    def get_algod(cfg: dict) -> algod.AlgodClient:
+        return algod.AlgodClient("", cfg["algod_url"])
+
+
+    def find_funded_holders(cfg: dict, n: int = 3) -> list[str]:
+        """Find real funded accounts holding ALGO and USDC via public indexer."""
+        client = get_algod(cfg)
+        idx_url = cfg["indexer_url"]
+        usdc_id = cfg["usdc_id"]
+
+        resp = httpx.get(
+            f"{idx_url}/v2/assets/{usdc_id}/balances",
+            params={"currency-greater-than": 5_000_000, "limit": 40},
+            timeout=20,
+        )
+        balances = resp.json().get("balances", [])
+        out = []
+        for b in balances:
+            try:
+                info = client.account_info(b["address"])
+                if info["amount"] - info["min-balance"] > 2_000_000 and not info.get("auth-addr"):
+                    out.append(b["address"])
+                    if len(out) == n:
+                        return out
+            except Exception:
+                continue
+        raise RuntimeError(f"Could not find {n} funded USDC holders on {cfg['name']}")
+
+
+    def simulate_group(client: algod.AlgodClient, group_b64: list[str]) -> str | None:
+        """Run transaction group through Algod simulation with empty signatures."""
+        stx = []
+        for b in group_b64:
+            d = encoding.msgpack_decode(b)
+            stx.append(
+                d
+                if isinstance(d, transaction.SignedTransaction)
+                else transaction.SignedTransaction(d, None)
+            )
+        req = SimulateRequest(
+            txn_groups=[SimulateRequestTransactionGroup(txns=stx)],
+            allow_empty_signatures=True,
+        )
+        res = client.simulate_transactions(req)
+        return res["txn-groups"][0].get("failure-message")
+
+
+    def main():
+        net_name = CONFIG["name"]
+        caip = CONFIG["caip"]
+        print(f"Testing {net_name} ({caip})...")
+
+        holders = find_funded_holders(CONFIG, n=3)
+        payer, pay_to, fp = holders
+        client = get_algod(CONFIG)
+
+        test_cases = [
+            ("ALGO", "0", True),
+            ("ALGO", "0", False),
+            ("USDC", str(CONFIG["usdc_id"]), True),
+            ("USDC", str(CONFIG["usdc_id"]), False),
+        ]
+
+        for asset_name, asset_id, fee_payer in test_cases:
+            extra = {"feePayer": fp} if fee_payer else {}
+            req = PaymentRequirements(
+                scheme="exact",
+                network=caip,
+                asset=asset_id,
+                amount="10000",
+                pay_to=pay_to,
+                max_timeout_seconds=300,
+                extra=extra,
+            )
+
+            avm_client = ExactAvmClient(_WatchOnly(payer), algod_url=CONFIG["algod_url"])
+            payload = avm_client.create_payment_payload(req)
+            failure = simulate_group(client, payload["paymentGroup"])
+            assert failure is None, f"Simulation failed on {net_name} {asset_name} (fee_payer={fee_payer}): {failure}"
+            print(f"  {net_name} {asset_name} (fee_payer={fee_payer}): ok")
+
+        print(f"All {net_name} simulations passed successfully.")
+
+
+    if __name__ == "__main__":
+        main()
+    ```
+
+    <sub>Source: [examples/testnet/simulate.py](https://github.com/x402-avm/examples/blob/main/testnet/simulate.py)</sub>
+
+    {/* /example */}
+  </Tab>
+  <Tab title="JavaScript">
+    {/* example: testnet/simulate.mjs */}
+
+    ```javascript testnet/simulate.mjs expandable
+    /**
+     * Read-only simulation of ALGO and USDC payments on Algorand TestNet.
+     *
+     * Demonstrates:
+     * 1. Discovering real funded USDC holders via public AlgoNode indexer endpoints.
+     * 2. Building exact AVM payment groups using a watch-only signer (empty signatures).
+     * 3. Verifying transaction group validity on live TestNet nodes using algod.simulateTransactions().
+     * 4. Verifying both native ALGO and ASA USDC transfers, with and without fee payers.
+     *
+     * How to run:
+     *   node testnet/simulate.mjs
+     *
+     * What it prints:
+     *   Found account addresses on TestNet and "ok" for each simulated payment scenario.
+     */
+
+    import algosdk from 'algosdk';
+    import {
+      TESTNET,
+      X402AvmError,
+      algodClient,
+      payForRequirement,
+    } from 'x402-avm-js';
+
+    // Refuse anything above 10,000 base units (the default cap is 1,000,000).
+    const SPEND_CONTROLS = { maxAmount: 10_000n };
+
+    async function fundedUsdcHolders(net, algod) {
+      const url = `${net.indexerUrl}/v2/assets/${net.usdc}/balances?currency-greater-than=5000000&limit=40`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Indexer query failed with status ${res.status}`);
+      }
+      const rows = (await res.json()).balances;
+      const out = [];
+      for (const row of rows) {
+        const info = await algod.accountInformation(row.address).do();
+        if (info.amount - info.minBalance > 2_000_000n && !info.authAddr) {
+          out.push(row.address);
+        }
+        if (out.length === 3) return out;
+      }
+      throw new Error(`Not enough funded USDC holders found on ${net.genesisId}`);
+    }
+
+    async function main() {
+      const name = 'testnet';
+      const net = TESTNET;
+      console.log(`Testing ${name} (${net.caip2})...`);
+      const algod = algodClient(name);
+
+      const [payer, payTo, feePayer] = await fundedUsdcHolders(net, algod);
+      console.log(`Discovered active accounts:`);
+      console.log(`  Payer:     ${payer}`);
+      console.log(`  PayTo:     ${payTo}`);
+      console.log(`  Fee payer: ${feePayer}`);
+
+      const cases = [
+        { asset: 'ALGO', assetId: '0', withFeePayer: true },
+        { asset: 'ALGO', assetId: '0', withFeePayer: false },
+        { asset: 'USDC', assetId: String(net.usdc), withFeePayer: true },
+        { asset: 'USDC', assetId: String(net.usdc), withFeePayer: false },
+      ];
+
+      for (const c of cases) {
+        const requirement = {
+          scheme: 'exact',
+          network: net.caip2,
+          asset: c.assetId,
+          amount: '10000',
+          payTo,
+          maxTimeoutSeconds: 300,
+          extra: c.withFeePayer ? { feePayer } : {},
+        };
+
+        const emptySigner = async (txns) => txns.map(() => null);
+
+        const challenge = {
+          x402Version: 2,
+          accepts: [requirement],
+        };
+
+        const paymentSignatureHeader = await payForRequirement(challenge, payer, algod, emptySigner, SPEND_CONTROLS);
+        const decoded = JSON.parse(new TextDecoder().decode(algosdk.base64ToBytes(paymentSignatureHeader)));
+
+        const txns = decoded.payload.paymentGroup.map(
+          (b64) =>
+            new algosdk.SignedTransaction({
+              txn: algosdk.decodeUnsignedTransaction(algosdk.base64ToBytes(b64)),
+            })
+        );
+
+        const sim = await algod
+          .simulateTransactions(
+            new algosdk.modelsv2.SimulateRequest({
+              txnGroups: [new algosdk.modelsv2.SimulateRequestTransactionGroup({ txns })],
+              allowEmptySignatures: true,
+            })
+          )
+          .do();
+
+        const failure = sim.txnGroups[0].failureMessage ?? null;
+        if (failure) {
+          throw new Error(`Simulation failed on ${name} ${c.asset} (withFeePayer=${c.withFeePayer}): ${failure}`);
+        }
+
+        console.log(`  ${name} ${c.asset} (fee_payer=${c.withFeePayer}): ok`);
+      }
+
+      console.log(`All ${name} simulations passed successfully.`);
+    }
+
+    main().catch((err) => {
+      // x402-avm-js errors carry a stable `code`, e.g. SPEND_LIMIT_EXCEEDED.
+      console.error('TestNet simulation failed:', err instanceof X402AvmError ? `${err.code}: ${err.message}` : err);
+      process.exit(1);
+    });
+    ```
+
+    <sub>Source: [examples/testnet/simulate.mjs](https://github.com/x402-avm/examples/blob/main/testnet/simulate.mjs)</sub>
+
+    {/* /example */}
+  </Tab>
+</Tabs>
+
+```bash
+python testnet/simulate.py
+node testnet/simulate.mjs
+```
+
+## Use your own nodes
+
+Environment variables replace the default endpoints. Python reads them when `x402_algorand` and `ai_economy_sdk` are imported.
+
+| Variable | Network | Default |
+|---|---|---|
+| `ALGOD_MAINNET_URL`, `INDEXER_MAINNET_URL` | MainNet | AlgoNode |
+| `ALGOD_TESTNET_URL`, `INDEXER_TESTNET_URL` | TestNet | AlgoNode |
+| `ALGOD_LOCALNET_URL`, `INDEXER_LOCALNET_URL` | LocalNet (`ai-economy-sdk`) | `http://localhost:4001`, `http://localhost:8980` |
+
+Or pass endpoints directly: `paid_mcp_session(..., algod_url=..., algod_token=...)`, `DefaultAvmSigner(key, algod_client=...)` and `ChainReader(indexer_url)` in Python, `algodClient(network, url, token)` in JavaScript.
+
+## Private networks
+
+Register a private or consortium network once at start-up. Registration needs the full genesis hash, because a 32-character id cannot be turned back into a hash; the simplest way is to read it from the network's algod.
+
+<CodeGroup>
+```python ai-economy-sdk
+from algosdk.v2client import algod
+from ai_economy_sdk import network_from_algod, register_network
+
+# Read the genesis hash from a node, register the network, get its CAIP-2 id
+node = algod.AlgodClient(token, "http://node.private.lan:4001")
+network_id = network_from_algod(node)
+
+# Or register from the full 44-character genesis hash (bare or as "algorand:<hash>")
+register_network(
+    "algorand:mFgazF+2uRS1tMiL9dsj01hJGySEmPN28B/TjjvpVW0=",
+    genesis_id="my-private-net-v1",
+    algod_url="http://node.private.lan:4001",
+    indexer_url="http://indexer.private.lan:8980",
+)
+```
+
+```python x402-algorand
+from x402_algorand import register_network
+
+network_id = register_network(
+    genesis_hash="mFgazF+2uRS1tMiL9dsj01hJGySEmPN28B/TjjvpVW0=",
+    genesis_id="privatenet-v1",
+    algod_url="http://node.internal:4001",
+    indexer_url="http://node.internal:8980",
+)
+# 'algorand:mFgazF-2uRS1tMiL9dsj01hJGySEmPN2'
+```
+</CodeGroup>
+
+`network_from_algod` registers the network with the default LocalNet URLs, and `x402_algorand.register_network` without URLs uses `http://localhost:4001` and `http://localhost:8980`. So pass your node explicitly where the SDK takes one: `DefaultAvmSigner(key, algod_client=node)` on the server, `paid_mcp_session(..., algod_url=..., algod_token=...)` on the client.
+
+In JavaScript nothing needs registering: create a client with `algodClient(networkId, url, token)` and `payForRequirement` reads the network from that node.
+
+### x402-algorand network utilities
+
+All are exported from `x402_algorand` and `x402_algorand.utils`:
+
+```python
+import base64
+from x402_algorand.utils import caip2_from_genesis_hash, get_genesis_hash, normalize_network
+
+# Genesis hash (base64 string or 32 raw bytes) to CAIP-2 id
+caip2_from_genesis_hash("wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=")
+caip2_from_genesis_hash(base64.b64decode("wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="))
+# both 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
+
+# x402 v1 names and legacy 44-character ids to short ids; valid short ids pass through
+normalize_network("algorand-testnet")  # 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'
+normalize_network("algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=")
+# 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'
+
+# Full base64 genesis hash of a registered network
+get_genesis_hash("algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k")
+# 'wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8='
+```
+
+`normalize_network` raises `NetworkError` (a `ValueError`) for anything else, including `"mainnet"` and `"localnet"`. More, such as `get_network_config` and `network_from_genesis_hash`: [x402-algorand reference](/reference/python/x402-algorand/index).
+
+## Next
+
+When TestNet works, follow [Go to MainNet](/production/mainnet).

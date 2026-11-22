@@ -1,0 +1,440 @@
+---
+title: "Pricing and passes"
+description: "Set fixed, per-tool, dynamic and bulk-discount prices on PaymentGate, and sell passes and subscriptions that make calls free for a period."
+---
+
+Use this page to decide what each call costs and who gets it for free. Every option is a `PaymentGate` argument; the gate prices each call before it sends the `402`, so the caller always sees the exact amount.
+
+Prices are integers in the base units of the gate's asset: microALGO when `asset_id=0`, or the ASA's base units (for USDC, 10<sup>-6</sup> USDC). A price of 0 makes a call free and skips the challenge.
+
+## Fixed and per-tool prices
+
+```python
+gate = PaymentGate(
+    signer=signer,
+    network="localnet",
+    pay_to=server_address,
+    asset_id=0,
+    prices={
+        "status": 0,            # free
+        "generate_text": 15000, # 0.015 ALGO
+        "render_chart": 25000,  # 0.025 ALGO
+    },
+    default_price=5000,         # every tool not listed
+)
+```
+
+With only `default_price`, every tool costs the same.
+
+## Dynamic prices
+
+Pass a callable instead of a dictionary. It receives the tool name, the call's arguments and the caller's verified address (`None` when the caller sent no valid [identity proof](/build/identity)), and returns the price.
+
+```python
+def dynamic_price(tool: str, args: dict, sender: str | None) -> int:
+    if tool == "transcribe":
+        seconds = float(args.get("duration", 0))
+        return 3000 + int(seconds * 50)          # base + 50 microALGO per second
+    if tool == "inference":
+        tokens = int(args.get("max_tokens", 100))
+        rate = 10 if sender == PARTNER_ADDRESS else 25
+        return 4000 + tokens * rate
+    return 5000
+
+gate = PaymentGate(signer=signer, network="localnet", pay_to=server_address, asset_id=0, prices=dynamic_price)
+```
+
+## Bulk discounts
+
+With a `ChainReader`, the gate looks up how much the caller has paid to `pay_to` in a recent window. Above `bulk_threshold`, the price is multiplied by `bulk_discount`. The caller is identified by its identity proof.
+
+```python
+from ai_economy_sdk import ChainReader
+
+gate = PaymentGate(
+    signer=signer,
+    network="localnet",
+    pay_to=server_address,
+    asset_id=0,
+    prices={"heavy_task": 10000},
+    chain=ChainReader("http://localhost:8980"),
+    bulk_threshold=50_000,  # more than 50,000 microALGO paid ...
+    bulk_days=30,           # ... in the last 30 days
+    bulk_discount=0.5,      # gets 50% off
+)
+```
+
+`ChainReader.for_network("testnet")` creates a reader for a public network's default indexer.
+
+### Example
+
+This server (port 9202) has a dictionary price, a price per word, and a 50% discount above 10,000 microALGO of past spend. It makes three calls:
+
+{/* example: localnet/pricing.py */}
+
+```python localnet/pricing.py expandable
+"""Pricing strategies in ai-economy-sdk: fixed per-tool, dynamic arguments, and bulk discounts.
+
+Starts an in-process FastMCP server on port 9202 and exercises three calls from a
+buyer account:
+1. Fixed price from a tool dictionary (compute = 6,000 microALGO).
+2. Dynamic price computed from call arguments (echo = 5,000 base + 100 per word).
+3. Bulk discount (50% off) automatically applied once past usage exceeds 10,000 microALGO.
+
+How to run:
+    python localnet/pricing.py
+
+What it prints:
+    Call 1 (compute - fixed dict price): charge = 6000 microALGO, result = 42
+    Call 2 (echo - dynamic price 5 words): charge = 5500 microALGO, result = echo: one two three four five
+    Call 3 (compute - bulk discount 50%): charge = 3000 microALGO, result = 84
+"""
+import asyncio
+import socket
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import uvicorn
+from fastmcp import FastMCP
+from ai_economy_sdk import DefaultAvmSigner, PaymentGate, paid_mcp_session
+from ai_economy_sdk.chain import ChainReader
+from _localnet import ALGOD, INDEXER_URL, new_funded_account
+
+SERVER_PORT = 9202
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/mcp"
+
+TOOL_PRICES = {"compute": 6000}
+
+
+def get_price(tool: str, args: dict[str, Any], sender: str | None) -> int:
+    """Determine price based on tool name, arguments, and sender address."""
+    if tool in TOOL_PRICES:
+        return TOOL_PRICES[tool]
+    if tool == "echo":
+        words = len(args.get("text", "").split())
+        return 5000 + words * 100
+    return 5000
+
+
+def main() -> None:
+    server_sk, server_addr = new_funded_account(algos=10)
+    buyer_sk, buyer_addr = new_funded_account(algos=10)
+
+    mcp = FastMCP("PricingServer")
+
+    @mcp.tool()
+    def compute(n: int) -> int:
+        """Double the input number."""
+        return n * 2
+
+    @mcp.tool()
+    def echo(text: str) -> str:
+        """Echo text back to the caller."""
+        return f"echo: {text}"
+
+    gate = PaymentGate(
+        signer=DefaultAvmSigner(server_sk, algod_client=ALGOD),
+        network="localnet",
+        pay_to=server_addr,
+        asset_id=0,
+        prices=get_price,
+        chain=ChainReader(INDEXER_URL),
+        bulk_threshold=10_000,
+        bulk_discount=0.5,
+    )
+
+    app = gate.wrap(mcp, transport="streamable-http")
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning"))
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
+
+    # Wait for server to bind port
+    for _ in range(50):
+        try:
+            socket.create_connection(("127.0.0.1", SERVER_PORT), 0.2).close()
+            break
+        except OSError:
+            time.sleep(0.1)
+
+    async def execute_client_calls() -> None:
+        # Call 1: compute (fixed price: 6,000 microALGO)
+        b0 = ALGOD.account_info(buyer_addr)["amount"]
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            res1 = await session.call_tool("compute", {"n": 21})
+        b1 = ALGOD.account_info(buyer_addr)["amount"]
+        charge1 = b0 - b1
+        print(f"Call 1 (compute - fixed dict price): charge = {charge1} microALGO, result = {res1.content[0].text}")
+
+        # Call 2: echo with 5 words (dynamic price: 5,000 + 500 = 5,500 microALGO)
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            res2 = await session.call_tool("echo", {"text": "one two three four five"})
+        b2 = ALGOD.account_info(buyer_addr)["amount"]
+        charge2 = b1 - b2
+        print(f"Call 2 (echo - dynamic price 5 words): charge = {charge2} microALGO, result = {res2.content[0].text}")
+
+        # Allow indexer to index preceding payments so cumulative usage exceeds 10,000 microALGO
+        time.sleep(1.0)
+
+        # Call 3: compute with bulk discount (6,000 * 0.5 = 3,000 microALGO)
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            res3 = await session.call_tool("compute", {"n": 42})
+        b3 = ALGOD.account_info(buyer_addr)["amount"]
+        charge3 = b2 - b3
+        print(f"Call 3 (compute - bulk discount 50%): charge = {charge3} microALGO, result = {res3.content[0].text}")
+
+    try:
+        asyncio.run(execute_client_calls())
+    finally:
+        server.should_exit = True
+        server_thread.join(timeout=5)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<sub>Source: [examples/localnet/pricing.py](https://github.com/x402-avm/examples/blob/main/localnet/pricing.py)</sub>
+
+{/* /example */}
+
+```text
+Call 1 (compute - fixed dict price): charge = 6000 microALGO, result = 42
+Call 2 (echo - dynamic price 5 words): charge = 5500 microALGO, result = echo: one two three four five
+Call 3 (compute - bulk discount 50%): charge = 3000 microALGO, result = 84
+```
+
+After two calls the buyer had paid 11,500 microALGO, above the threshold, so the third cost half of 6,000.
+
+## The fee floor
+
+The server's fee payer pays 2,000 microALGO per settled call ([why](/how-it-works#the-two-transaction-atomic-group)). An ALGO price at or below that loses money on every call, so the gate guards against it:
+
+- A fixed price (`prices` dict or `default_price`) in `0 < price <= 2000` raises `ConfigurationError` (a `ValueError`) when the gate is created.
+- A price that lands in that range at call time (from a callable or after a discount) is raised to 2,001 microALGO, with a warning logged once per tool.
+- `allow_loss=True` turns both checks off, for deliberate subsidies.
+- The floor applies only when `asset_id=0`. USDC and other ASA prices are not compared with ALGO fees, although the server still pays the fees in ALGO.
+
+```text
+ai_economy_sdk.exceptions.ConfigurationError: price 1000 for tool 'summarize' does not cover facilitator fees (2000 microalgos); raise it or pass allow_loss=True
+```
+
+3,000 microALGO is a sensible minimum ALGO price.
+
+## Passes
+
+A pass lets a buyer pay once and then call your tools for free for `pass_days` (30 by default). [How passes work](/how-it-works#passes). Passes need an indexer, because the gate finds them in the caller's payment history.
+
+```python
+from ai_economy_sdk import ChainReader, PaymentGate
+
+gate = PaymentGate(
+    signer=signer,
+    network="localnet",
+    pay_to=vendor_address,
+    asset_id=0,
+    prices={"transcribe": 8000, "summarize": 12000},
+    chain=ChainReader("http://localhost:8980"),
+    pass_scopes={
+        "listing:audio-tools": 100_000,  # 0.1 ALGO for this service
+        "vendor:acme-corp": 500_000,     # 0.5 ALGO for the whole vendor
+    },
+    pass_days=30.0,
+)
+```
+
+Scope names are yours to choose. A pass counts only on gates whose `pay_to` received it, in the gate's asset, and whose `pass_scopes` include its scope, so one vendor's pass never unlocks another vendor's tools. The note prefix is the constant `PASS_NOTE_PREFIX` (`x402-pass:`).
+
+### Buy a pass
+
+Any wallet can buy one: send at least the scope's price, in the gate's asset, to `pay_to` with the note `x402-pass:<scope>`.
+
+```python
+from algosdk import transaction
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
+
+sp = algod_client.suggested_params()
+txn = transaction.PaymentTxn(
+    buyer_address, sp, vendor_address, 100_000,
+    note=b"x402-pass:listing:audio-tools",
+)
+txid = algod_client.send_transaction(AccountTransactionSigner(buyer_private_key).sign_transactions([txn], [0])[0])
+transaction.wait_for_confirmation(algod_client, txid, 4)
+```
+
+The buyer's later calls must carry an identity proof; `paid_mcp_session` sends one by default.
+
+### Example
+
+On port 9203, a buyer pays 5,000 microALGO for `echo`, buys a pass with the note `x402-pass:listing:echo-1`, waits for the indexer to see it, and calls again for free:
+
+{/* example: localnet/passes.py */}
+
+```python localnet/passes.py expandable
+"""Passes in ai-economy-sdk: grant free tool access via on-chain receipt notes.
+
+Demonstrates vendor-scoped passes on port 9203:
+1. Buyer calls 'echo' without a pass, paying the standard 5,000 microALGO fee.
+2. Buyer buys a pass by sending an on-chain payment with note 'x402-pass:<scope>' to the vendor.
+3. Buyer calls 'echo' again; the server's PaymentGate verifies the active pass via the indexer and charges 0 microALGO.
+
+How to run:
+    python localnet/passes.py
+
+What it prints:
+    Call 1 (without pass): charge = 5000 microALGO, result = echo: without pass
+    Bought pass on-chain (txid: ...)
+    Call 2 (with pass): charge = 0 microALGO, result = echo: with pass
+"""
+import asyncio
+import socket
+import sys
+import threading
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import algosdk.atomic_transaction_composer
+import algosdk.transaction
+import uvicorn
+from fastmcp import FastMCP
+from ai_economy_sdk import DefaultAvmSigner, PaymentGate, paid_mcp_session
+from ai_economy_sdk.chain import ChainReader
+from _localnet import ALGOD, INDEXER_URL, new_funded_account
+
+SERVER_PORT = 9203
+SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}/mcp"
+SCOPE = "listing:echo-1"
+PASS_PRICE = 50_000
+TOOL_PRICE = 5_000
+
+
+def main() -> None:
+    server_sk, server_addr = new_funded_account(algos=10)
+    buyer_sk, buyer_addr = new_funded_account(algos=10)
+
+    mcp = FastMCP("PassServer")
+
+    @mcp.tool()
+    def echo(text: str) -> str:
+        """Echo text back to the caller."""
+        return f"echo: {text}"
+
+    gate = PaymentGate(
+        signer=DefaultAvmSigner(server_sk, algod_client=ALGOD),
+        network="localnet",
+        pay_to=server_addr,
+        asset_id=0,
+        prices={"echo": TOOL_PRICE},
+        chain=ChainReader(INDEXER_URL),
+        pass_scopes={SCOPE: PASS_PRICE},
+        pass_days=30.0,
+    )
+
+    app = gate.wrap(mcp, transport="streamable-http")
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=SERVER_PORT, log_level="warning"))
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
+
+    for _ in range(50):
+        try:
+            socket.create_connection(("127.0.0.1", SERVER_PORT), 0.2).close()
+            break
+        except OSError:
+            time.sleep(0.1)
+
+    async def execute_client_calls() -> None:
+        # 1. Call before acquiring pass
+        b0 = ALGOD.account_info(buyer_addr)["amount"]
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            res1 = await session.call_tool("echo", {"text": "without pass"})
+        b1 = ALGOD.account_info(buyer_addr)["amount"]
+        charge1 = b0 - b1
+        print(f"Call 1 (without pass): charge = {charge1} microALGO, result = {res1.content[0].text}")
+
+        # 2. Buy pass via on-chain payment with x402-pass:<scope> note
+        sp = ALGOD.suggested_params()
+        note = f"x402-pass:{SCOPE}".encode("utf-8")
+        pass_txn = algosdk.transaction.PaymentTxn(buyer_addr, sp, server_addr, PASS_PRICE, note=note)
+        signer = algosdk.atomic_transaction_composer.AccountTransactionSigner(buyer_sk)
+        stxn = signer.sign_transactions([pass_txn], [0])[0]
+        txid = ALGOD.send_transaction(stxn)
+        algosdk.transaction.wait_for_confirmation(ALGOD, txid, 10)
+        print(f"Bought pass on-chain (txid: {txid[:8]}...)")
+
+        # Wait for indexer to detect the pass transaction
+        reader = ChainReader(INDEXER_URL)
+        for _ in range(20):
+            time.sleep(0.5)
+            active = reader.active_passes(buyer_addr, server_addr, 0, {SCOPE: PASS_PRICE})
+            if active:
+                break
+
+        # 3. Call after pass is active
+        b2 = ALGOD.account_info(buyer_addr)["amount"]
+        async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
+            res2 = await session.call_tool("echo", {"text": "with pass"})
+        b3 = ALGOD.account_info(buyer_addr)["amount"]
+        charge2 = b2 - b3
+        print(f"Call 2 (with pass): charge = {charge2} microALGO, result = {res2.content[0].text}")
+
+    try:
+        asyncio.run(execute_client_calls())
+    finally:
+        server.should_exit = True
+        server_thread.join(timeout=5)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<sub>Source: [examples/localnet/passes.py](https://github.com/x402-avm/examples/blob/main/localnet/passes.py)</sub>
+
+{/* /example */}
+
+```text
+Call 1 (without pass): charge = 5000 microALGO, result = echo: without pass
+Bought pass on-chain (txid: LRLDZTVU...)
+Call 2 (with pass): charge = 0 microALGO, result = echo: with pass
+```
+
+## Subscription tokens
+
+The gate can also treat holders of an ASA as subscribers. If the caller holds `subscription_asset_id` and received it within `subscription_max_age_days`, calls are free. Set `subscription_issuer` to count only tokens received from your own issuing account.
+
+```python
+gate = PaymentGate(
+    signer=signer,
+    network="localnet",
+    pay_to=vendor_address,
+    asset_id=0,
+    prices={"echo": 5000},
+    chain=ChainReader("http://localhost:8980"),
+    subscription_asset_id=12345678,
+    subscription_max_age_days=30.0,
+    subscription_issuer=issuer_address,
+)
+```
+
+## Order of evaluation
+
+For each call, `PaymentGate.price_for`:
+
+1. Takes the base price from `prices` (dict or callable) or `default_price`.
+2. If it is 0, the call is free.
+3. If the caller holds a valid pass for one of `pass_scopes`, or a valid subscription token, the call is free.
+4. If the caller's past spend is above `bulk_threshold`, applies `bulk_discount`.
+5. For ALGO prices, applies the fee floor.
+
+Lookups that fail (indexer or algod errors) count as "no usage, subscription or pass", and are logged.
+
+## Next
+
+- [Identity](/build/identity): how the gate learns who is calling.
+- [`ChainReader` reference](/reference/python/ai-economy-sdk/chain-reader)

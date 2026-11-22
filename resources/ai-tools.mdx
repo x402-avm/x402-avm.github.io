@@ -1,0 +1,65 @@
+---
+title: "Docs for AI tools"
+description: "llms.txt, llms-full.txt and Markdown versions of every page for coding assistants, and the AGENTS.md file in each x402-avm repository."
+---
+
+Give these to a coding assistant, an agent or a chat model so it answers from the current documentation and follows each repository's rules.
+
+## Files for models
+
+| URL | Contents | Use it when |
+|---|---|---|
+| [`/llms.txt`](https://x402-avm.github.io/llms.txt) | An index of every page: title, one-line description, link to its Markdown version, grouped as in the navigation. | The tool can follow links and fetch only what it needs. |
+| [`/llms-full.txt`](https://x402-avm.github.io/llms-full.txt) | The full text of every page in navigation order, as Markdown. | You want to paste or attach everything at once. |
+| `/<page>.md` | One page as Markdown, for example [`/quickstart.md`](https://x402-avm.github.io/quickstart.md) or [`/reference/python/ai-economy-sdk/paid-mcp-session.md`](https://x402-avm.github.io/reference/python/ai-economy-sdk/paid-mcp-session.md). | The tool needs one topic. |
+
+The files follow the [llms.txt convention](https://llmstxt.org) and are rebuilt from the page sources on every deploy. The menu next to each page title also has **Copy page** (Markdown), **View as Markdown**, **Open in ChatGPT** and **Open in Claude**.
+
+The API reference is generated from the Python docstrings and the TSDoc of `x402-avm-js`, so a model reading it sees the same signatures and parameter descriptions as the source. Each reference page links to the exact source line.
+
+<CodeGroup>
+```text Coding assistant
+Read https://x402-avm.github.io/llms-full.txt. Then add a paid MCP tool to my FastMCP server
+with ai-economy-sdk, priced at 5,000 microALGO per call on LocalNet.
+```
+
+```text Agent setup
+Read https://x402-avm.github.io/build/ai-agents.md and configure paid_mcp_session for my agent
+with a $0.05 per-payment cap on TestNet.
+```
+</CodeGroup>
+
+## AGENTS.md files
+
+[AGENTS.md](https://agents.md) is a Markdown file at the root of a repository that tells coding agents how to work on it: setup, tests, conventions, and what never to do. Every repository in the [x402-avm organization](https://github.com/x402-avm) has one. An agent should read the file of the repository it works on first; it takes precedence over the organization-wide one.
+
+| Repository | Use its AGENTS.md for |
+|---|---|
+| [x402-avm](https://github.com/x402-avm/x402-avm/blob/main/AGENTS.md) (hub) | Choosing the repository for a task, the three test modes, organization-wide conventions |
+| [ai-economy-sdk](https://github.com/x402-avm/ai-economy-sdk/blob/main/AGENTS.md) | Changing the MCP payment gate and client |
+| [x402-algorand](https://github.com/x402-avm/x402-algorand/blob/main/AGENTS.md) | Changing the Algorand scheme plugin |
+| [x402-avm-js](https://github.com/x402-avm/x402-avm-js/blob/main/AGENTS.md) | Changing the TypeScript client |
+| [examples](https://github.com/x402-avm/examples/blob/main/AGENTS.md) | Adding or running examples |
+| [marketplace-demo](https://github.com/x402-avm/marketplace-demo/blob/main/AGENTS.md) | Running the LocalNet demonstration marketplace |
+| [x402-avm.github.io](https://github.com/x402-avm/x402-avm.github.io/blob/main/AGENTS.md) | Editing this site, regenerating the API reference, refreshing inlined examples |
+
+The hub file maps tasks to repositories (sell MCP tools: `ai-economy-sdk`; add Algorand to an x402 SDK server or client: `x402-algorand`; pay from a browser or Node: `x402-avm-js`). It also has a [hub llms.txt](https://github.com/x402-avm/x402-avm/blob/main/llms.txt).
+
+### Test modes
+
+All packages use the same three tiers; each package's README and AGENTS.md say which it supports.
+
+| Mode | Python | JavaScript | Needs |
+|---|---|---|---|
+| Offline | `python -m pytest tests -q` | `npm test` | Nothing |
+| `LOCALNET=1` | `LOCALNET=1 python -m pytest tests -q` | `LOCALNET=1 npm test` | AlgoKit LocalNet running; settles real payments |
+| `PUBLIC_NETS=1` | `PUBLIC_NETS=1 python -m pytest tests -q -m public` | `PUBLIC_NETS=1 npm test` | Internet access; builds TestNet and MainNet payments and simulates them, no keys or funds |
+
+### Conventions every agent follows
+
+- Use CAIP-2 network ids (`algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k`, `algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe`); do not hand-write the 44-character form in new code.
+- Amounts are integers in base units; USDC has 6 decimals (MainNet 31566704, TestNet 10458941).
+- Never commit private keys, mnemonics or tokens; read them from the environment.
+- Never send a MainNet transaction from a test. Settle on LocalNet; use `PUBLIC_NETS=1` simulation for public networks.
+- Tests must not depend on local paths or pre-existing accounts; LocalNet tests fund fresh accounts from the KMD dispenser.
+- Documentation uses plain, precise language, without marketing terms or emojis.

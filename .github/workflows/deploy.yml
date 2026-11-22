@@ -45,6 +45,12 @@ jobs:
       - name: Add search (mark content, inject search UI)
         run: python3 scripts/add_search.py --site site
 
+      - name: Write redirect stubs for moved pages
+        run: python3 scripts/add_redirects.py --site site
+
+      - name: Check internal links in the exported site
+        run: python3 scripts/check_site_links.py --site site
+
       - name: Build search index
         run: npx -y pagefind@1.6.0 --site site
 
