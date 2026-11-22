@@ -46,8 +46,10 @@ Configured Algodv2 client.
 ## Example
 
 ```ts
-const client = algodClient('testnet');
-const localClient = algodClient('localnet');
+const client = algodClient('testnet'); // https://testnet-api.algonode.cloud
+const localClient = algodClient('localnet'); // http://localhost:4001
+const status = await localClient.status().do();
+const privateNode = algodClient('my-private-net', 'http://10.0.0.5:4001', 'my-token');
 ```
 
-<sub>Source: [src/index.ts](https://github.com/x402-avm/x402-avm-js/blob/main/src/index.ts#L307)</sub>
+<sub>Source: [src/index.ts](https://github.com/x402-avm/x402-avm-js/blob/main/src/index.ts#L309)</sub>

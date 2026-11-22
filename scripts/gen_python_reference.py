@@ -136,6 +136,7 @@ PACKAGES = [
                 Obj("ai_economy_sdk.exceptions.PaymentVerificationError", import_from="ai_economy_sdk"),
                 Obj("ai_economy_sdk.exceptions.PaymentRequiredError", import_from="ai_economy_sdk"),
                 Obj("ai_economy_sdk.exceptions.SettlementError", import_from="ai_economy_sdk"),
+                Obj("ai_economy_sdk.exceptions.SpendLimitExceededError", import_from="ai_economy_sdk"),
             ]),
         ],
         constants=ConstantsPage(
@@ -488,8 +489,18 @@ def render_examples(obj) -> str:
 _MICRO = re.compile(r"\bmicro[Aa]lgos?\b")
 
 
+# Sphinx cross-reference roles in docstrings (:class:`~pkg.mod.Name`, :func:`name`) become
+# plain inline code; a leading "~" keeps only the last dotted component, as Sphinx renders it.
+_ROLE = re.compile(r":(?:func|class|meth|exc|attr|mod|data|obj):`(~?)([^`]+)`")
+
+
+def _role_to_code(m: re.Match) -> str:
+    target = m.group(2).split(".")[-1] if m.group(1) else m.group(2)
+    return f"`{target}`"
+
+
 def normalize_terms(content: str) -> str:
-    """Write "microALGO" in prose; leave fenced code and inline code untouched."""
+    """Write "microALGO" in prose and turn Sphinx roles into inline code; leave fenced code untouched."""
     out, in_fence = [], False
     for line in content.split("\n"):
         if line.lstrip().startswith("```"):
@@ -499,6 +510,7 @@ def normalize_terms(content: str) -> str:
         if in_fence:
             out.append(line)
             continue
+        line = _ROLE.sub(_role_to_code, line)
         parts = re.split(r"(`[^`]*`)", line)
         out.append("".join(p if p.startswith("`") else _MICRO.sub("microALGO", p) for p in parts))
     return "\n".join(out)

@@ -64,15 +64,14 @@ resolve_network("localnet", local)  # 'algorand:<32 characters>'
 ```
 
 ```ts JavaScript
-import algosdk from 'algosdk';
-import { LOCALNET_ENDPOINTS, networkFromAlgod, networkFromGenesisHash, resolveNetwork, MAINNET } from 'x402-avm-js';
+import { algodClient, networkFromAlgod, networkFromGenesisHash, resolveNetwork, MAINNET } from 'x402-avm-js';
 
 resolveNetwork('testnet');  // 'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'
 networkFromGenesisHash(MAINNET.genesisHash);  // 'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k'
 MAINNET.usdc;  // 31566704
 
 // LocalNet: ask its algod
-const id = await networkFromAlgod(new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl));
+const id = await networkFromAlgod(algodClient('localnet'));
 ```
 </CodeGroup>
 

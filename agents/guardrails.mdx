@@ -39,7 +39,7 @@ An agent that can pay needs limits it cannot talk itself out of. Combine the con
 
 ## Spend controls reference
 
-Spend controls come from the official `x402` client. `paid_mcp_session` passes `spend_controls` to it unchanged.
+Spend controls come from the official `x402` client. `paid_mcp_session` passes `spend_controls` to it unchanged. A refused payment raises `SpendLimitExceededError` (an `AIEconomyError`) from the session; in 0.5.0 it was an `ExceptionGroup` wrapping x402's `PaymentError`.
 
 | Value | Effect |
 |---|---|

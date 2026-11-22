@@ -18,7 +18,7 @@ FastMCP middleware that settles payments on chain only upon tool success.
 If the tool raises an exception or returns an error result (`is_error=True`),
 the payment reservation in ReplayStore is released and the buyer is not charged.
 
-It also refuses (with :class:`~ai_economy_sdk.exceptions.PaymentRequiredError`)
+It also refuses (with `PaymentRequiredError`)
 any tool call with a positive price that did not pass through the gate's HTTP
 middleware, for example a call made over a transport the gate does not wrap.
 

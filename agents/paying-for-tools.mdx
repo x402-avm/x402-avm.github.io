@@ -27,7 +27,7 @@ sequenceDiagram
     Session-->>Agent: CallToolResult
 ```
 
-If the price is outside the spend controls, the session refuses to create the payment and nothing is signed. The x402 HTTP client raises `PaymentError` (caused by `NoMatchingRequirementsError`), which leaves the `async with` block inside an `ExceptionGroup`.
+If the price is outside the spend controls, the session refuses to create the payment and nothing is signed. `paid_mcp_session` raises `SpendLimitExceededError` (an `AIEconomyError`, exported from `ai_economy_sdk`), with x402's `PaymentError` as `__cause__`. In 0.5.0 the refusal reached your code as an `ExceptionGroup` wrapping that `PaymentError`, so `except AIEconomyError` missed it (and over SSE the session could hang); upgrade to 0.5.1.
 
 ## Minimal agent session
 

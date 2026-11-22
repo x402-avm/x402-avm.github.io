@@ -47,6 +47,7 @@ AIEconomyError
 ├── ConfigurationError (ValueError)
 │   ├── UnknownNetworkError
 │   └── AlgodClientRequiredError (also RuntimeError)
+├── SpendLimitExceededError
 ├── PaymentVerificationError (RuntimeError)
 ├── PaymentRequiredError (fastmcp ToolError)
 └── SettlementError (fastmcp ToolError)
@@ -57,6 +58,7 @@ AIEconomyError
 | `ConfigurationError` | `ValueError` | Invalid arguments, detected before any payment: a fixed ALGO price in `(0, 2000]` without `allow_loss=True` ([the fee floor](/ai-economy-sdk/pricing#the-fee-floor)); an unsupported `transport=` in `wrap()` or `paid_mcp_session`; a `pricing_func` that is not callable or accepts neither `(args, sender)` nor `(args)`; `subscription_issuer` set with a `chain` whose `has_active_subscription()` has no `issuer` parameter. |
 | `UnknownNetworkError` | `ConfigurationError` | A network name or CAIP-2 id cannot be resolved, for example `register_network()` with a 32-character id of an unknown network (pass the full genesis hash or use `network_from_algod`). |
 | `AlgodClientRequiredError` | `ConfigurationError`, `RuntimeError` | `DefaultAvmSigner` was created without `algod_client` and is asked to simulate, send or confirm. |
+| `SpendLimitExceededError` | | Since 0.5.1. `paid_mcp_session`: the buyer's `spend_controls` refused a payment (price above the cap, asset not allowed). Nothing was signed. The message includes the amount and asset the server asked for; x402's `PaymentError` is the `__cause__`. In 0.5.0 this arrived as an `ExceptionGroup`. |
 | `PaymentVerificationError` | `RuntimeError` | `DefaultAvmSigner` simulated a payment group and algod reported a failure. |
 | `PaymentRequiredError` | FastMCP `ToolError` | A priced tool call reached the FastMCP server without passing through the gate (for example over a transport the gate does not wrap), or its payment reservation expired. The call is refused, not served unpaid. |
 | `SettlementError` | FastMCP `ToolError` | The tool succeeded but the payment could not be settled. The tool output is withheld and the reservation released, so the buyer is not charged. |
@@ -91,7 +93,7 @@ An invalid payment never raises: `verify()` and `settle()` return a response wit
 | Where | Error | Cause |
 |---|---|---|
 | `x402Client.create_payment_payload` | `NoMatchingRequirementsError` | No offer passes the spend controls and policies, or none is for a registered network. |
-| `wrapHttpxWithPayment` / `x402HttpxClient`, and so `paid_mcp_session` | `x402.http.clients.httpx.PaymentError` (`Failed to handle payment: ...`), caused by the `NoMatchingRequirementsError` | The same refusal, raised by the HTTP client. In an MCP session it reaches your code inside an `ExceptionGroup`. |
+| `wrapHttpxWithPayment` / `x402HttpxClient`, and so `paid_mcp_session` | `x402.http.clients.httpx.PaymentError` (`Failed to handle payment: ...`), caused by the `NoMatchingRequirementsError` | The same refusal, raised by the HTTP client. `paid_mcp_session` converts it to [`SpendLimitExceededError`](#ai-economy-sdk-exceptions) (0.5.1; in 0.5.0 it reached your code inside an `ExceptionGroup`). |
 
 ## x402-avm-js errors
 

@@ -73,10 +73,9 @@ async with paid_mcp_session("http://127.0.0.1:9201/mcp", buyer_sk, "localnet") a
 ```
 
 ```ts client.ts
-import algosdk from 'algosdk';
-import { LOCALNET_ENDPOINTS, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
+import { algodClient, decodePaymentRequired, payForRequirement } from 'x402-avm-js';
 
-const algod = new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl);
+const algod = algodClient('localnet');
 const res = await fetch(url);
 if (res.status === 402) {
   const required = decodePaymentRequired(res.headers.get('PAYMENT-REQUIRED')!);

@@ -56,7 +56,7 @@ Full reference: [`paid_mcp_session`](/reference/python/ai-economy-sdk/paid-mcp-s
 
 ## Spend controls
 
-The session uses the official `x402` client, which checks every payment against its spend controls before signing. A payment that fails the check is refused and nothing is signed: the x402 HTTP client raises `PaymentError` (caused by `NoMatchingRequirementsError`), which reaches your code from the `async with` block, inside an `ExceptionGroup`.
+The session uses the official `x402` client, which checks every payment against its spend controls before signing. A payment that fails the check is refused and nothing is signed: `paid_mcp_session` raises `SpendLimitExceededError` (an `AIEconomyError`, exported from `ai_economy_sdk`) from the `async with` block, with x402's `PaymentError` (caused by `NoMatchingRequirementsError`) as `__cause__`. Its message includes the amount and asset the server asked for. In 0.5.0 this refusal arrived as an `ExceptionGroup` wrapping the `PaymentError`, and over SSE the session could hang; fixed in 0.5.1.
 
 **Defaults** (`spend_controls=None`):
 
@@ -131,7 +131,7 @@ async def main() -> None:
         async with paid_mcp_session(SERVER_URL, buyer_sk, "localnet") as session:
             result = await session.call_tool("echo", {"text": "hello world"})
             print(f"Result: {result.content[0].text}")
-    except AIEconomyError as err:  # payment refused, settlement failed, bad config ...
+    except AIEconomyError as err:  # spend controls refused the price (SpendLimitExceededError, 0.5.1+), settlement failed, bad config ...
         raise SystemExit(f"Paid call failed: {err}")
 
     after_balance = ALGOD.account_info(buyer_addr)["amount"]

@@ -39,7 +39,7 @@ Promise resolving to the canonical CAIP-2 network identifier.
 ```ts
 const algod = algodClient('localnet');
 const networkId = await networkFromAlgod(algod);
-console.log(networkId); // 'algorand:...'
+console.log(networkId); // 'algorand:' followed by the genesis hash, e.g. TestNet's CAIP-2 id
 ```
 
 <sub>Source: [src/index.ts](https://github.com/x402-avm/x402-avm-js/blob/main/src/index.ts#L282)</sub>

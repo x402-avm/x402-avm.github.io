@@ -286,7 +286,8 @@
                   "reference/python/ai-economy-sdk/algod-client-required-error",
                   "reference/python/ai-economy-sdk/payment-verification-error",
                   "reference/python/ai-economy-sdk/payment-required-error",
-                  "reference/python/ai-economy-sdk/settlement-error"
+                  "reference/python/ai-economy-sdk/settlement-error",
+                  "reference/python/ai-economy-sdk/spend-limit-exceeded-error"
                 ]
               },
               "reference/python/ai-economy-sdk/constants"

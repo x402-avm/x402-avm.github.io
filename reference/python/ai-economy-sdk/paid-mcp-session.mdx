@@ -102,6 +102,7 @@ Active, initialized MCP client session capable of invoking tools via
 ## Raises
 
 - `ConfigurationError`: If `transport` is not `"streamable-http"` or `"sse"`.
+- `SpendLimitExceededError`: If a tool call needs a payment that `spend_controls` forbid (amount above the cap, or an asset that is not allowed). Nothing is signed and no funds move. The x402 error is its `__cause__`. Other errors propagate unchanged.
 
 ## Examples
 
@@ -127,4 +128,4 @@ asyncio.run(run())
 - `PaymentGate`: Server-side payment middleware.
 - `AIEconomySDK`: High-level server framework.
 
-<sub>Source: [ai_economy_sdk/client.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/client.py#L40)</sub>
+<sub>Source: [ai_economy_sdk/client.py](https://github.com/x402-avm/ai-economy-sdk/blob/main/ai_economy_sdk/client.py#L100)</sub>

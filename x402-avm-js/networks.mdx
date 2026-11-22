@@ -42,16 +42,14 @@ await networkFromAlgod(algodClient('testnet'));  // same as TESTNET.caip2
 A LocalNet's genesis hash changes when it is reset, so read its id from the node instead of hard-coding it:
 
 ```ts
-import algosdk from 'algosdk';
-import { LOCALNET_ENDPOINTS, networkFromAlgod } from 'x402-avm-js';
+import { algodClient, networkFromAlgod } from 'x402-avm-js';
 
-const algod = new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl);
-console.log(await networkFromAlgod(algod));
+console.log(await networkFromAlgod(algodClient('localnet')));
 ```
 
-<Warning>
-  In x402-avm-js 0.4.0, `algodClient('localnet')` returns a client that connects to port 80 instead of 4001 (it passes an empty port to `algosdk.Algodv2`, which overrides the port in the URL). Create the LocalNet client with algosdk directly, as above: `new algosdk.Algodv2(LOCALNET_ENDPOINTS.algodToken, LOCALNET_ENDPOINTS.algodUrl)`. `algodClient('mainnet')` and `algodClient('testnet')` are not affected.
-</Warning>
+<Note>
+  Fixed in 0.4.1: earlier versions connected to port 80 for LocalNet; upgrade.
+</Note>
 
 `payForRequirement` does this itself: it reads the network from the algod you pass and pays the matching offer.
 

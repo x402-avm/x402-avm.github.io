@@ -5,6 +5,24 @@ description: "Notable changes to ai-economy-sdk, x402-algorand and x402-avm-js, 
 
 This page combines the changelogs of the three packages: [ai-economy-sdk](https://github.com/x402-avm/ai-economy-sdk/blob/main/CHANGELOG.md), [x402-algorand](https://github.com/x402-avm/x402-algorand/blob/main/CHANGELOG.md) and [x402-avm-js](https://github.com/x402-avm/x402-avm-js/blob/main/CHANGELOG.md).
 
+<Update label="2026-11-19 (ai-economy-sdk 0.5.1, x402-avm-js 0.4.1)" description="ai-economy-sdk 0.5.1, x402-avm-js 0.4.1" tags={["Python", "JavaScript"]}>
+  ## ai-economy-sdk 0.5.1
+
+  **Fixed**
+
+  - When the buyer's own spend controls refused a payment inside `paid_mcp_session`, the caller got an `ExceptionGroup` wrapping x402's `PaymentError` (cause `NoMatchingRequirementsError`), so `except AIEconomyError` missed it. The refusal now surfaces as `SpendLimitExceededError`, with the x402 error as `__cause__`. Other errors, and groups that contain anything besides the refusal, propagate unchanged.
+
+  **Added**
+
+  - `SpendLimitExceededError(AIEconomyError)`, exported from the package and documented in `ai_economy_sdk.exceptions`. Its message includes the amount and asset the server asked for.
+
+  ## x402-avm-js 0.4.1
+
+  **Fixed**
+
+  - `algodClient('localnet')` connected to port 80 instead of 4001: the empty-string port passed to `algosdk.Algodv2` made algosdk 3.x override the port in the URL. The port is now omitted so the URL's own port (or the scheme default for MainNet and TestNet) is used. Affected every release since the first.
+</Update>
+
 <Update label="2026-11-19 (minor releases)" description="ai-economy-sdk 0.5.0, x402-algorand 0.3.0, x402-avm-js 0.4.0" tags={["Python", "JavaScript", "Security"]}>
   <Warning>
     **Security: upgrade ai-economy-sdk to 0.5.0.** In 0.4.x the payment gate only inspected `POST` requests whose path ended in `/messages`. A FastMCP Streamable HTTP app wrapped with `PaymentGate.middleware()` (`POST /mcp`), or a gated SSE app mounted under a path prefix, passed priced `tools/call` requests to the server **without a payment**.

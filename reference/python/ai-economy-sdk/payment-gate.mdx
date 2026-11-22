@@ -213,13 +213,13 @@ Generate Starlette middleware definitions for an ASGI application.
 
 The middleware inspects the JSON-RPC body of every HTTP `POST` (any path,
 any transport) and gates each `tools/call`. Use it directly when you build
-the FastMCP HTTP app yourself, together with :class:`SettleOnSuccessMiddleware`
+the FastMCP HTTP app yourself, together with `SettleOnSuccessMiddleware`
 (priced calls are refused with HTTP 500 until that middleware exists)::
 
     mcp.add_middleware(SettleOnSuccessMiddleware(gate))
     app = mcp.http_app(middleware=gate.middleware())
 
-:meth:`wrap` does both steps for you.
+`wrap` does both steps for you.
 
 **Returns**
 
@@ -240,7 +240,7 @@ def wrap(
 
 Wrap a FastMCP instance into an ASGI application protected by this PaymentGate.
 
-Adds :class:`SettleOnSuccessMiddleware` to `mcp` and builds the FastMCP HTTP
+Adds `SettleOnSuccessMiddleware` to `mcp` and builds the FastMCP HTTP
 app with the gate's ASGI middleware.
 
 **Parameters**
