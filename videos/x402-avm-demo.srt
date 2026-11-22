@@ -1,0 +1,91 @@
+1
+00:00:00,500 --> 00:00:06,284
+x402-avm: pay per call for MCP tools and APIs, on Algorand.
+
+2
+00:00:07,633 --> 00:00:09,622
+An agent calls a paid tool.
+
+3
+00:00:09,662 --> 00:00:14,057
+The server answers HTTP 402 Payment Required, with a price.
+
+4
+00:00:14,447 --> 00:00:17,109
+The client signs a two-transaction group:
+
+5
+00:00:17,149 --> 00:00:21,788
+it pays exactly the price, and the server pays the 2,000 microALGO fee.
+
+6
+00:00:22,478 --> 00:00:25,912
+The server verifies it by simulation and runs the tool.
+
+7
+00:00:25,952 --> 00:00:28,817
+The payment settles only if the tool succeeds.
+
+8
+00:00:30,766 --> 00:00:33,788
+With x402-algorand's ready-made signers,
+
+9
+00:00:33,828 --> 00:00:36,849
+a FastAPI paywall is about thirty lines.
+
+10
+00:00:37,639 --> 00:00:44,596
+For MCP, ai-economy-sdk's PaymentGate prices each tool, over Streamable HTTP.
+
+11
+00:00:46,533 --> 00:00:52,914
+A real run on LocalNet: a plain request gets a 402, for 10,000 microALGO.
+
+12
+00:00:53,904 --> 00:00:55,874
+The HTTPX client pays it:
+
+13
+00:00:55,914 --> 00:00:59,411
+the buyer's balance drops by exactly 10,000.
+
+14
+00:01:00,401 --> 00:01:06,484
+The MCP quickstart: the tool answers, and the buyer pays exactly 5,000 microALGO.
+
+15
+00:01:07,674 --> 00:01:12,861
+On the indexer: one atomic group, with the server's 2,000 microALGO fee.
+
+16
+00:01:14,800 --> 00:01:18,695
+Clients set spend controls, in Python and JavaScript.
+
+17
+00:01:18,735 --> 00:01:24,040
+With a 10,000 cap, a 50,000 demand is refused before anything is signed.
+
+18
+00:01:25,767 --> 00:01:28,238
+TestNet and MainNet run the same code.
+
+19
+00:01:28,278 --> 00:01:33,194
+Read-only examples simulate real ALGO and USDC payments, and spend nothing.
+
+20
+00:01:35,593 --> 00:01:39,659
+The docs at x402-avm.github.io have full search:
+
+21
+00:01:39,699 --> 00:01:44,193
+type “spend controls”, and land on the API reference.
+
+22
+00:01:45,109 --> 00:01:50,829
+And llms.txt gives AI agents an index of every page, in Markdown.
+
+23
+00:01:51,967 --> 00:01:54,700
+Install the SDKs, and start on LocalNet.
